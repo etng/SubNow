@@ -17,6 +17,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !Config.shared.hasCompletedSetup {
             Log.info("首次启动，弹出组件向导")
             SetupWizardController.shared.present()
+        } else if ProcessInfo.processInfo.environment["SUBNOW_SHOW_SETTINGS"] == "1" {
+            SettingsWindowController.shared.show()
+            if let tab = ProcessInfo.processInfo.environment["SUBNOW_SETTINGS_TAB"], let idx = Int(tab) {
+                SettingsWindowController.shared.selectTab(idx)
+            }
         }
 
         ComponentCenter.shared.refresh()

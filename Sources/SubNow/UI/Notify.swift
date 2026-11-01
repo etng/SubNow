@@ -18,9 +18,15 @@ final class Notify: NSObject, UNUserNotificationCenterDelegate {
     private static let categoryOffer = "SUBNOW_OFFER"
     private static let categoryNotReady = "SUBNOW_NOT_READY"
 
+    /// UNUserNotificationCenter 只在真 .app 里可用；裸二进制（swift run 调试）优雅降级
+    private var center: UNUserNotificationCenter? {
+        guard Bundle.main.bundleIdentifier != nil else { return nil }
+        return UNUserNotificationCenter.current()
+    }
+
     override init() {
         super.init()
-        UNUserNotificationCenter.current().delegate = self
+        center?.delegate = self
         registerCategories()
     }
 
@@ -30,11 +36,11 @@ final class Notify: NSObject, UNUserNotificationCenterDelegate {
         let openSettings = UNNotificationAction(identifier: "OPEN_SETTINGS", title: "去设置", options: [.foreground])
         let offer = UNNotificationCategory(identifier: Self.categoryOffer, actions: [generate, skip], intentIdentifiers: [])
         let notReady = UNNotificationCategory(identifier: Self.categoryNotReady, actions: [openSettings], intentIdentifiers: [])
-        UNUserNotificationCenter.current().setNotificationCategories([offer, notReady])
+        center?.setNotificationCategories([offer, notReady])
     }
 
     func requestAuthorization() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
+        center?.requestAuthorization(options: [.alert, .sound]) { granted, error in
             Log.info("通知授权: granted=\(granted) error=\(error.map(String.init(describing:)) ?? "nil")")
         }
     }
@@ -50,7 +56,7 @@ final class Notify: NSObject, UNUserNotificationCenterDelegate {
         content.sound = .default
         content.userInfo = ["path": videoPath]
         let request = UNNotificationRequest(identifier: "offer-" + videoPath, content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request)
+        center?.add(request)
     }
 
     func postNotReady(videoPath: String, reason: String) {
@@ -62,7 +68,7 @@ final class Notify: NSObject, UNUserNotificationCenterDelegate {
         content.sound = nil
         content.userInfo = ["path": videoPath]
         let request = UNNotificationRequest(identifier: "notready-" + videoPath, content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request)
+        center?.add(request)
     }
 
     func postDone(videoPath: String, stage: String) {
@@ -71,12 +77,12 @@ final class Notify: NSObject, UNUserNotificationCenterDelegate {
         content.body = URL(fileURLWithPath: videoPath).lastPathComponent
         content.sound = .default
         let request = UNNotificationRequest(identifier: "done-\(videoPath)-\(stage)", content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request)
+        center?.add(request)
     }
 
     func clearOffers(for videoPath: String) {
-        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["offer-" + videoPath])
-        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ["offer-" + videoPath])
+        center?.removePendingNotificationRequests(withIdentifiers: ["offer-" + videoPath])
+        center?.removeDeliveredNotifications(withIdentifiers: ["offer-" + videoPath])
     }
 
     // MARK: - UNUserNotificationCenterDelegate

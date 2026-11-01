@@ -86,6 +86,11 @@ actor PlayerBook {
         return removed
     }
 
+    /// 全部记录（设置界面展示用）
+    func allRecords() -> [(key: String, record: Record)] {
+        records.map { ($0.key, $0.value) }.sorted { $0.record.updated > $1.record.updated }
+    }
+
     // MARK: - 持久化（原子写）
 
     private func load() {
