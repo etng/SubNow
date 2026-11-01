@@ -8,6 +8,8 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private let statusItem: NSStatusItem
     private let menu = NSMenu()
     private var stateLine = "正在启动…"
+    private var playbackInfo: PlayerMonitor.PlaybackMenuInfo?
+    private var canGenerate = false
 
     override init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -31,8 +33,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         return NSImage(systemSymbolName: "caption.2", accessibilityDescription: "SubNow 马上有字幕")
     }
 
-    func update(stateLine: String) {
+    func update(stateLine: String, playback: PlayerMonitor.PlaybackMenuInfo?, canGenerate: Bool) {
         self.stateLine = stateLine
+        self.playbackInfo = playback
+        self.canGenerate = canGenerate
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -43,6 +47,23 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         header.isEnabled = false
         menu.addItem(header)
         menu.addItem(.separator())
+
+        // 当前播放区
+        if let info = playbackInfo, let delegate {
+            let title = NSMenuItem(title: "正在播放：《\(info.videoName)》（\(info.player)）", action: nil, keyEquivalent: "")
+            title.isEnabled = false
+            menu.addItem(title)
+            let sub = NSMenuItem(title: info.subtitleState, action: nil, keyEquivalent: "")
+            sub.isEnabled = false
+            sub.indentationLevel = 1
+            menu.addItem(sub)
+            let generate = NSMenuItem(title: "为这个视频生成字幕", action: #selector(AppDelegate.generateForCurrentPlayback), keyEquivalent: "")
+            generate.target = delegate
+            generate.isEnabled = canGenerate
+            generate.indentationLevel = 1
+            menu.addItem(generate)
+            menu.addItem(.separator())
+        }
 
         addItem(menu, title: "组件就绪检查…", target: delegate, action: #selector(AppDelegate.showSetupWizard))
         addItem(menu, title: "设置…", target: delegate, action: #selector(AppDelegate.showSettings))

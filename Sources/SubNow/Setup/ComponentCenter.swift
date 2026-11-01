@@ -30,8 +30,23 @@ final class ComponentCenter {
     private(set) var statuses: [ComponentID: Status] = [:]
     private var downloadingTasks: [ComponentID: Task<Void, Never>] = [:]
 
-    /// 状态变化回调（UI 刷新用）
-    var onChange: (() -> Void)?
+    /// 状态变化观察者（UI 多处订阅）
+    private var observers: [UUID: () -> Void] = [:]
+
+    @discardableResult
+    func addObserver(_ block: @escaping () -> Void) -> UUID {
+        let token = UUID()
+        observers[token] = block
+        return token
+    }
+
+    func removeObserver(_ token: UUID) {
+        observers.removeValue(forKey: token)
+    }
+
+    private func notifyObservers() {
+        for block in observers.values { block() }
+    }
 
     // MARK: - 探测
 
@@ -44,7 +59,7 @@ final class ComponentCenter {
         statuses[.finalModel] = probeModel(.finalModel, Config.shared.finalModelURL, minBytes: 2_500_000_000,
                                            name: "转录精做模型（large-v3）", isRequired: false)
         statuses[.translation] = Status(id: .translation, state: translationState(), required: true)
-        onChange?()
+        notifyObservers()
     }
 
     func status(_ id: ComponentID) -> Status? { statuses[id] }
@@ -149,14 +164,14 @@ final class ComponentCenter {
                     state = .ready(detail: "Ollama：\(cfg.ollamaDraftModel)（精做模型缺 \(cfg.ollamaFinalModel)，仅影响精做）")
                     // 草稿翻译可用即视为基础就绪
                     statuses[.translation] = Status(id: .translation, state: state, required: true)
-                    onChange?()
+                    notifyObservers()
                     return
                 } else {
                     state = .missing(detail: "Ollama 在线，但缺翻译模型 \(cfg.ollamaDraftModel)")
                 }
             }
             statuses[.translation] = Status(id: .translation, state: state, required: true)
-            onChange?()
+            notifyObservers()
         }
     }
 
@@ -177,7 +192,7 @@ final class ComponentCenter {
             return
         }
         statuses[id]?.state = .downloading(progress: 0, detail: "连接中…")
-        onChange?()
+        notifyObservers()
         downloadingTasks[id] = Task { @MainActor in
             defer { downloadingTasks[id] = nil }
             do {
@@ -188,7 +203,7 @@ final class ComponentCenter {
                     switch progress {
                     case .progress(let frac, let detail):
                         statuses[id]?.state = .downloading(progress: frac, detail: detail)
-                        onChange?()
+                        notifyObservers()
                     case .finished:
                         refresh()
                         return
@@ -198,7 +213,7 @@ final class ComponentCenter {
                 refresh()
             } catch {
                 statuses[id]?.state = .broken(detail: "下载失败：\(error.localizedDescription)")
-                onChange?()
+                notifyObservers()
             }
         }
     }

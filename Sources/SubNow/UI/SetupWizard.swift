@@ -8,6 +8,8 @@ final class SetupWizardController: NSWindowController, NSWindowDelegate {
 
     private let stack = NSStackView()
     private var migrated = false
+    private var observerToken: UUID?
+    private var lastRebuild = Date.distantPast
 
     init() {
         let window = NSWindow(
@@ -21,6 +23,14 @@ final class SetupWizardController: NSWindowController, NSWindowDelegate {
         super.init(window: window)
         window.delegate = self
         window.contentView = buildContent()
+        // 组件状态实时刷新（Ollama 异步探测、下载进度都会推到这里；节流防下载进度闪烁）
+        observerToken = ComponentCenter.shared.addObserver { [weak self] in
+            guard let self, self.window?.isVisible == true else { return }
+            let now = Date()
+            guard now.timeIntervalSince(self.lastRebuild) >= 0.5 else { return }
+            self.lastRebuild = now
+            self.rebuild()
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("不支持") }
