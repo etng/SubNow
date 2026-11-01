@@ -31,4 +31,20 @@ enum Paths {
             try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
         }
     }
+
+    /// ggml 在 metallib 缺失时的回退：按 GGML_METAL_PATH_RESOURCES 找 kernels/ 源码。
+    /// 把路径指向 SPM 资源 bundle 内 kernels/ 的父目录（存在才设，避免覆盖用户的显式设置）。
+    static func installMetalResourceHint() {
+        guard getenv("GGML_METAL_PATH_RESOURCES") == nil,
+              let resURL = Bundle.main.resourceURL else { return }
+        let candidates = [
+            resURL.appendingPathComponent("SubNow_CWhisper.bundle/Contents/Resources", isDirectory: true),
+            resURL.appendingPathComponent("SubNow_CWhisper.bundle/Resources", isDirectory: true),
+        ]
+        for dir in candidates where FileManager.default.fileExists(atPath: dir.appendingPathComponent("kernels").path) {
+            setenv("GGML_METAL_PATH_RESOURCES", dir.path, 0)
+            Log.info("Metal 回退资源目录: \(dir.path)")
+            return
+        }
+    }
 }

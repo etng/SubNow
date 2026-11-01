@@ -12,12 +12,23 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     override init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
-        statusItem.button?.image = NSImage(systemSymbolName: "caption.2",
-                                           accessibilityDescription: "SubNow 马上有字幕")
+        statusItem.button?.image = Self.menuBarImage()
         menu.delegate = self
         menu.autoenablesItems = false
         statusItem.menu = menu
-        _ = stateLine
+    }
+
+    /// 定稿的「双字幕条」模板字形（scripts/make_icon.swift 生成）；缺失时退回系统符号
+    private static func menuBarImage() -> NSImage? {
+        for name in ["menubar-36.png", "menubar-18.png"] {
+            if let url = Bundle.main.url(forResource: name, withExtension: nil, subdirectory: nil),
+               let img = NSImage(contentsOf: url) {
+                img.isTemplate = true
+                img.size = NSSize(width: 18, height: 18)
+                return img
+            }
+        }
+        return NSImage(systemSymbolName: "caption.2", accessibilityDescription: "SubNow 马上有字幕")
     }
 
     func update(stateLine: String) {

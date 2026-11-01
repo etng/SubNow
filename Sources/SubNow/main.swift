@@ -6,6 +6,7 @@ import AppKit
 MainActor.assumeIsolated {
     Log.setup()
     Paths.ensureAll()
+    Paths.installMetalResourceHint()
     Log.info("SubNow 启动 pid=\(ProcessInfo.processInfo.processIdentifier)")
 
     let app = NSApplication.shared

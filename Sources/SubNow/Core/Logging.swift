@@ -34,6 +34,11 @@ enum Log {
     static func warn(_ msg: @autoclosure () -> String) { write(.warn, msg()) }
     static func error(_ msg: @autoclosure () -> String) { write(.error, msg()) }
 
+    /// 等待队列中未落盘的日志写完（进程退出前必须调用，否则最后的清理日志会丢）
+    static func flush() {
+        queue.sync { }
+    }
+
     private static func write(_ level: LogLevel, _ msg: @autoclosure () -> String) {
         let line = "\(formatter.string(from: Date())) [\(level.rawValue.uppercased())] \(msg())"
         queue.async {
