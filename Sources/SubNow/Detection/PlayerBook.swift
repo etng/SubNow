@@ -6,6 +6,8 @@ import Foundation
 /// - 但若记录声称"有外挂字幕"而字幕文件已被删除 → 作废，重新判定；
 /// - processing / draft-done：应用存活期间跳过；重启后变 queued-restart，重新触发。
 actor PlayerBook {
+    static let shared = PlayerBook()
+
     struct Record: Codable {
         var status: String
         var path: String
@@ -17,7 +19,7 @@ actor PlayerBook {
     private var records: [String: Record] = [:]
     private let fileURL = Paths.stateFile
 
-    init() {
+    private init() {
         load()
         // 重启后遗留的处理中/粗稿完成 → 重新可触发（等下次播放判定）
         for (key, var r) in records where r.status == "processing" || r.status == "draft-done" {

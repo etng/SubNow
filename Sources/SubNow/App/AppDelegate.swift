@@ -40,6 +40,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.updateStatusBarState()
             Task { await self.advisor.handle(snapshot) }
         }
+        JobManager.shared.onJobsChanged = { [weak self] in
+            self?.updateStatusBarState()
+        }
         monitor.start()
         updateStatusBarState()
     }
@@ -49,26 +52,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateStatusBarState() {
         guard let statusBar else { return }
         let center = ComponentCenter.shared
+        let manager = JobManager.shared
+        let activeJob = manager.jobs.first { ![JobManager.Stage.done, .failed, .cancelled].contains($0.stage) }
+
+        // 任务进行中：状态行显示进度
+        if let job = activeJob {
+            statusBar.update(stateLine: "\(job.stage.rawValue) \(Int(job.pct))% · \(job.detail)",
+                             playback: playbackInfo(from: latestSnapshot, canGenerate: false),
+                             canGenerate: false,
+                             jobs: manager.jobs.map(\.menuInfo))
+            return
+        }
+
         if !center.isBaseReady {
-            statusBar.update(stateLine: "尚未就绪（\(center.missingSummary)）", playback: nil, canGenerate: false)
+            statusBar.update(stateLine: "尚未就绪（\(center.missingSummary)）",
+                             playback: nil, canGenerate: false, jobs: [])
             return
         }
         if let active = latestSnapshot?.playbacks.first {
-            let name = URL(fileURLWithPath: active.videoPath).lastPathComponent
-            let subState: String
-            if let zh = active.loadedChineseSubtitle {
-                subState = zh ? "已有中文字幕轨" : "未加载中文字幕"
-            } else {
-                subState = "字幕状态检测中"
-            }
             statusBar.update(stateLine: "已就绪 · 马上有字幕",
-                             playback: PlayerMonitor.PlaybackMenuInfo(
-                                videoName: name, player: active.player,
-                                videoPath: active.videoPath, subtitleState: subState),
-                             canGenerate: true)
+                             playback: playbackInfo(from: latestSnapshot, canGenerate: true),
+                             canGenerate: true, jobs: [])
         } else {
-            statusBar.update(stateLine: "已就绪 · 等待播放", playback: nil, canGenerate: false)
+            statusBar.update(stateLine: "已就绪 · 等待播放",
+                             playback: nil, canGenerate: false, jobs: manager.jobs.prefix(3).map(\.menuInfo))
         }
+    }
+
+    private func playbackInfo(from snapshot: PlayerMonitor.Snapshot?, canGenerate: Bool) -> PlayerMonitor.PlaybackMenuInfo? {
+        guard let active = snapshot?.playbacks.first else { return nil }
+        let name = URL(fileURLWithPath: active.videoPath).lastPathComponent
+        let subState: String
+        if let zh = active.loadedChineseSubtitle {
+            subState = zh ? "已有中文字幕轨" : "未加载中文字幕"
+        } else {
+            subState = "字幕状态检测中"
+        }
+        return PlayerMonitor.PlaybackMenuInfo(videoName: name, player: active.player,
+                                              videoPath: active.videoPath, subtitleState: subState)
     }
 
     // MARK: - 通知动作
@@ -85,12 +106,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// 触发生成（M4 接入 JobManager）
+    /// 触发生成
     private func generateForVideo(path: String) {
         advisor.markRequested(path)
         Notify.shared.clearOffers(for: path)
-        Log.info("请求生成字幕：\(path)")
-        // M4: JobManager.shared.enqueue(videoPath:)
+        JobManager.shared.enqueue(videoPath: path)
+        updateStatusBarState()
     }
 
     @objc func generateForCurrentPlayback() {
@@ -106,6 +127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         Log.info("SubNow 退出，开始清理")
         monitor.stop()
+        JobManager.shared.cancelAll()
         // M4：JobManager.cancelAll() + 子进程强杀在此接入
         Log.info("清理完成")
         Log.flush()

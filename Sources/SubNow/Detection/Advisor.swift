@@ -7,7 +7,7 @@ import Foundation
 /// - 记账（跨会话）由 PlayerBook 管：done/has-subs/failed/skipped 永久静默。
 @MainActor
 final class Advisor {
-    private let book = PlayerBook()
+    private let book = PlayerBook.shared
     private var pendingPath: String?
     private var consecutiveCount = 0
     private var offeredThisSession = Set<String>()
@@ -110,3 +110,4 @@ final class Advisor {
         _ = await book.forget(pathPrefix: pathPrefix)
     }
 }
+

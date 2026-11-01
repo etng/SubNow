@@ -10,6 +10,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private var stateLine = "正在启动…"
     private var playbackInfo: PlayerMonitor.PlaybackMenuInfo?
     private var canGenerate = false
+    private var jobs: [(title: String, pct: Double)] = []
 
     override init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -33,10 +34,12 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         return NSImage(systemSymbolName: "caption.2", accessibilityDescription: "SubNow 马上有字幕")
     }
 
-    func update(stateLine: String, playback: PlayerMonitor.PlaybackMenuInfo?, canGenerate: Bool) {
+    func update(stateLine: String, playback: PlayerMonitor.PlaybackMenuInfo?, canGenerate: Bool,
+                jobs: [(title: String, pct: Double)] = []) {
         self.stateLine = stateLine
         self.playbackInfo = playback
         self.canGenerate = canGenerate
+        self.jobs = jobs
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -62,6 +65,16 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             generate.isEnabled = canGenerate
             generate.indentationLevel = 1
             menu.addItem(generate)
+            menu.addItem(.separator())
+        }
+
+        // 任务进度区
+        if !jobs.isEmpty {
+            for job in jobs {
+                let item = NSMenuItem(title: job.title, action: nil, keyEquivalent: "")
+                item.isEnabled = false
+                menu.addItem(item)
+            }
             menu.addItem(.separator())
         }
 
