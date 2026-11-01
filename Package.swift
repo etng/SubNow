@@ -75,6 +75,13 @@ let package = Package(
             path: "Sources/SubNow",
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
+        // 引擎探针：snprobe <model> <wav> [vad] —— 绕开 GUI/测试环境直接验证 WhisperBridge
+        .executableTarget(
+            name: "snprobe",
+            dependencies: ["WhisperBridge"],
+            path: "Sources/snprobe",
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
         .testTarget(
             name: "SubNowTests",
             dependencies: ["SubNow"],

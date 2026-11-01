@@ -1,9 +1,28 @@
 #include "whisper.h"
 #include "include/whisper_bridge.h"
+#include "ggml.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+// SUBNOW_VERBOSE=1 时把 ggml/whisper 的 DEBUG 级日志也放出来（生产排障用）
+static void snwh_log_cb(enum ggml_log_level level, const char * text, void * user_data) {
+    (void) user_data;
+    static const char * names[] = { "none", "debug", "info", "warn", "error" };
+    const char * name = (level >= 0 && level <= 4) ? names[level] : "?";
+    fprintf(stderr, "[ggml:%s] %s", name, text);
+}
+
+static void snwh_install_verbose_logging_if_requested(void) {
+    static int installed = 0;
+    if (installed) return;
+    installed = 1;
+    const char * v = getenv("SUBNOW_VERBOSE");
+    if (v && v[0] == '1') {
+        ggml_log_set(snwh_log_cb, NULL);
+    }
+}
 
 struct snwh_context {
     struct whisper_context * wctx;
@@ -11,6 +30,7 @@ struct snwh_context {
     char language[32];
     snwh_progress_fn progress_fn; void * progress_ud;
     snwh_abort_fn abort_fn;       void * abort_ud;
+    int abort_requested;
 };
 
 // ---- 回调 ----
@@ -23,10 +43,16 @@ static void bridge_progress_cb(struct whisper_context * ctx,
     if (c && c->progress_fn) c->progress_fn(c->progress_ud, progress);
 }
 
+// ggml 约定：回调返回 true = 中止计算。
+// 我们的桥约定（见 whisper_bridge.h）：abort_fn 返回 false = 中止。
 static bool bridge_abort_cb(void * user_data) {
     struct snwh_context * c = (struct snwh_context *) user_data;
-    if (c && c->abort_fn) return c->abort_fn(c->abort_ud);  // false = 请求中止
-    return true;
+    if (c && c->abort_fn) {
+        bool keep_going = c->abort_fn(c->abort_ud);
+        if (!keep_going) c->abort_requested = 1;
+        return !keep_going;
+    }
+    return false;  // 无回调：永不中止
 }
 
 // ---- 16kHz 单声道 PCM16 WAV 读取 ----
@@ -102,7 +128,11 @@ static bool read_wav_16k_mono(const char * path, float ** out_samples, int * out
 
 snwh_context_t * snwh_load(const char * model_path, const char * vad_model_path,
                            char * err_buf, int err_len) {
+    snwh_install_verbose_logging_if_requested();
     struct whisper_context_params cparams = whisper_context_default_params();
+    // SUBNOW_NO_GPU=1 → 强制 CPU（对照排障用）
+    const char * no_gpu = getenv("SUBNOW_NO_GPU");
+    if (no_gpu && no_gpu[0] == '1') cparams.use_gpu = false;
     struct whisper_context * w = whisper_init_from_file_with_params(model_path, cparams);
     if (!w) {
         snprintf(err_buf, err_len, "模型加载失败: %s", model_path);
@@ -155,7 +185,7 @@ int snwh_run(snwh_context_t * ctx, const char * wav_path, const char * language,
     int rc = whisper_full(ctx->wctx, p, samples, n_samples);
     free(samples);
 
-    if (rc == -1 && ctx->abort_fn && !ctx->abort_fn(ctx->abort_ud)) {
+    if (ctx->abort_requested) {
         snprintf(err_buf, err_len, "转录被中止");
         return -2;
     }
