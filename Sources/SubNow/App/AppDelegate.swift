@@ -9,6 +9,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusBar = StatusBarController()
         installSigtermHandler()
         Log.info("菜单栏图标已就绪")
+
+        // 首次启动 → 自动弹组件向导
+        if !Config.shared.hasCompletedSetup {
+            SetupWizardController.shared.present()
+        }
+
+        ComponentCenter.shared.refresh()
+        ComponentCenter.shared.refreshOllamaAsync()
+        ComponentCenter.shared.onChange = { [weak self] in
+            self?.updateStatusBarState()
+        }
+        updateStatusBarState()
+    }
+
+    private func updateStatusBarState() {
+        let center = ComponentCenter.shared
+        if center.isBaseReady {
+            statusBar?.update(stateLine: "已就绪 · 马上有字幕")
+        } else {
+            statusBar?.update(stateLine: "尚未就绪（\(center.missingSummary)）")
+        }
     }
 
     /// SIGTERM → 优雅退出（保证清理逻辑与退出日志总被执行，绝不留孤儿进程）
@@ -37,6 +58,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func showSettings() {
         SettingsWindowController.shared.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc func showSetupWizard() {
+        SetupWizardController.shared.present()
     }
 
     @objc func revealLog() {

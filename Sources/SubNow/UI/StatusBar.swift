@@ -44,6 +44,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         menu.addItem(header)
         menu.addItem(.separator())
 
+        addItem(menu, title: "组件就绪检查…", target: delegate, action: #selector(AppDelegate.showSetupWizard))
         addItem(menu, title: "设置…", target: delegate, action: #selector(AppDelegate.showSettings))
         addItem(menu, title: "打开日志", target: delegate, action: #selector(AppDelegate.revealLog))
         menu.addItem(.separator())
