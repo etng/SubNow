@@ -17,6 +17,7 @@ final class SetupTests: XCTestCase {
             label: "测试模型")
         var lastFraction: Double = -1
         var finished = false
+        var failure: String?
         for await event in stream {
             switch event {
             case .progress(let frac, let detail):
@@ -24,8 +25,11 @@ final class SetupTests: XCTestCase {
                 if frac >= 1 { print("[dl] \(detail)") }
             case .finished:
                 finished = true
+            case .failed(let message):
+                failure = message
             }
         }
+        XCTAssertNil(failure, "下载失败：\(failure ?? "")")
         XCTAssertTrue(finished, "应收到 finished 事件")
         XCTAssertEqual(lastFraction, 1.0, accuracy: 0.001)
         let size = (try? FileManager.default.attributesOfItem(atPath: dest.path)[.size] as? Int64) ?? 0

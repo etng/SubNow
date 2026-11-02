@@ -1,7 +1,7 @@
 import Foundation
 
 /// 视频文件探测：内嵌字幕流语言（ffprobe）+ 同名外挂字幕扫描。
-/// 判定规则与POC 调研结果一致：无外挂 且 无中文内嵌轨 → 需要生成。
+/// 判定规则：无外挂 且 无中文内嵌轨 → 需要生成。
 enum VideoProbe {
     static let videoExtensions: Set<String> = [
         ".mkv", ".mp4", ".m4v", ".avi", ".mov", ".webm", ".ts", ".m2ts", ".mts",
@@ -22,7 +22,7 @@ enum VideoProbe {
     // MARK: - 外挂字幕扫描
 
     /// 同名外挂：stem 精确 / stem. / stem- / stem_ 前缀；另查 Subs/ 子目录（前缀即可）。
-    /// 任意语言的外挂都算"有字幕"——英字视频不触发（POC 调研结果语义，防止重复打扰）。
+    /// 任意语言的外挂都算"有字幕"——英字视频不触发（防止重复打扰）。
     static func sidecarExists(for video: URL) -> (exists: Bool, isChinese: Bool) {
         let dir = video.deletingLastPathComponent()
         let stem = video.deletingPathExtension().lastPathComponent
@@ -55,10 +55,9 @@ enum VideoProbe {
 
     // MARK: - 内嵌字幕轨（ffprobe）
 
-    static func embeddedSubtitleLanguages(of video: URL, ffmpegURL: URL?) -> [String] {
-        guard let ffmpegURL else { return [] }
-        let ffprobe = ffmpegURL.deletingLastPathComponent().appendingPathComponent("ffprobe")
-        guard FileManager.default.isExecutableFile(atPath: ffprobe.path) else { return [] }
+    static func embeddedSubtitleLanguages(of video: URL, ffprobeURL: URL?) -> [String] {
+        guard let ffprobeURL else { return [] }
+        let ffprobe = ffprobeURL
 
         let p = Process()
         p.executableURL = ffprobe
@@ -73,7 +72,7 @@ enum VideoProbe {
 
         do {
             try p.run()
-            // 60s 上限（POC 调研结果同款），防网络挂载盘卡死轮询
+            // 60s 上限，防网络挂载盘卡死轮询
             let deadline = DispatchTime.now() + 60
             let done = DispatchSemaphore(value: 0)
             p.terminationHandler = { _ in done.signal() }
@@ -96,16 +95,54 @@ enum VideoProbe {
 
     // MARK: - 综合
 
-    static func facts(for video: URL, ffmpegURL: URL?) -> VideoFacts {
+    /// 异步探测：ffprobe 可能因网络挂载盘卡住数十秒，必须离开 MainActor。
+    /// 按 path|size|mtime 缓存内嵌轨语言，轮询时同一文件只探测一次。
+    static func facts(for video: URL, ffprobeURL: URL?) async -> VideoFacts {
         let sidecar = sidecarExists(for: video)
-        let langs = embeddedSubtitleLanguages(of: video, ffmpegURL: ffmpegURL)
+        let key = cacheKey(for: video)
+        let langs: [String]
+        if let cached = await ProbeCache.shared.languages(for: key) {
+            langs = cached
+        } else {
+            langs = await Task.detached(priority: .utility) {
+                embeddedSubtitleLanguages(of: video, ffprobeURL: ffprobeURL)
+            }.value
+            await ProbeCache.shared.store(langs, for: key)
+        }
         let embeddedZH = langs.contains { zhLanguages.contains($0) }
         return VideoFacts(embeddedChinese: embeddedZH, hasSidecar: sidecar.exists,
                           sidecarIsChinese: sidecar.isChinese)
     }
 
+    /// 文件指纹：路径 + 大小 + 修改时间；任一变化即重新探测。
+    static func cacheKey(for video: URL) -> String {
+        let attrs = try? FileManager.default.attributesOfItem(atPath: video.path)
+        let size = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
+        let mtime = (attrs?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+        return "\(video.path)|\(size)|\(mtime)"
+    }
+
     static func isVideoFile(_ url: URL) -> Bool {
         videoExtensions.contains(url.pathExtension.lowercased().withLeadingDot)
+    }
+}
+
+/// 探测缓存：只保存内嵌轨语言（外挂字幕随时可能出现，必须实时扫描）。
+actor ProbeCache {
+    static let shared = ProbeCache()
+    private var entries: [String: [String]] = [:]
+    private var order: [String] = []
+    private let capacity = 200
+
+    func languages(for key: String) -> [String]? { entries[key] }
+
+    func store(_ languages: [String], for key: String) {
+        if entries.updateValue(languages, forKey: key) == nil {
+            order.append(key)
+            if order.count > capacity {
+                entries.removeValue(forKey: order.removeFirst())
+            }
+        }
     }
 }
 

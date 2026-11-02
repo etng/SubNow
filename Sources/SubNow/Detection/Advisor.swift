@@ -46,21 +46,22 @@ final class Advisor {
 
     private func evaluate(playback: PlayerMonitor.Playback) async {
         let url = URL(fileURLWithPath: playback.videoPath)
-        let ffmpegURL = FFmpegLocator.locate()
+        let ffprobeURL = FFmpegLocator.locateFFprobe()
 
         // ① 字幕缺失判定
         var needs = false
-        if playback.viaIPC {
-            // socket 精确判定：看"已加载"的字幕轨（用户要求：没有"加载到"合适的中文字幕才提示）
-            if playback.loadedChineseSubtitle == true {
+        if playback.viaIPC, let loaded = playback.loadedChineseSubtitle {
+            // socket 精确判定：看"已选中"的字幕轨（用户要求：没有"加载到"合适的中文字幕才提示）
+            if loaded {
                 await book.set("has-subs", for: url, sidecar: true)
                 return
             }
-            // socket 可用但 track-list 没有中文轨 → 视为缺失
-            // （文件里可能有未加载的字轨，但用户此刻确实没字幕可看）
+            // track-list 可读但没有已选中的中文轨 → 视为缺失
+            // （文件里可能有未启用的字轨，但用户此刻确实没字幕可看）
             needs = true
         } else {
-            let facts = VideoProbe.facts(for: url, ffmpegURL: ffmpegURL)
+            // 无 IPC，或 IPC 连上了但 track-list 读取失败 → 降级到文件级判定
+            let facts = await VideoProbe.facts(for: url, ffprobeURL: ffprobeURL)
             if !facts.needsChineseSubtitle {
                 await book.set("has-subs", for: url, sidecar: facts.hasSidecar)
                 return
@@ -74,6 +75,9 @@ final class Advisor {
         if await book.shouldSkip(video: url, sidecarExistsNow: sidecarNow) {
             return
         }
+
+        // 用户关闭「自动通知」：照常判定/记账，但不主动弹通知；菜单手动入口仍可用
+        guard Config.shared.autoAsk else { return }
 
         // ③ 就绪门槛：没就绪只提示一次，绝不触发流水线
         let center = ComponentCenter.shared
@@ -91,7 +95,7 @@ final class Advisor {
         onOffer?(Offer(videoPath: playback.videoPath, player: playback.player, viaIPC: playback.viaIPC))
     }
 
-    /// 用户点了"忽略本次"→ 永久静默（与POC 调研结果语义一致）
+    /// 用户点了"忽略本次"→ 永久静默
     func markSkipped(_ path: String) {
         offeredThisSession.insert(path)
         let url = URL(fileURLWithPath: path)

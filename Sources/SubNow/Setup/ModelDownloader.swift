@@ -8,6 +8,7 @@ actor ModelDownloader {
     enum Event {
         case progress(fraction: Double, detail: String)
         case finished
+        case failed(String)
     }
 
     struct DownloadError: LocalizedError {
@@ -25,8 +26,12 @@ actor ModelDownloader {
                         continuation.yield(.progress(fraction: frac, detail: detail))
                     }
                     continuation.yield(.finished)
+                } catch is CancellationError {
+                    Log.info("下载已取消: \(dest.lastPathComponent)")
+                    continuation.yield(.failed("已取消"))
                 } catch {
                     Log.error("下载失败 \(dest.lastPathComponent): \(error.localizedDescription)")
+                    continuation.yield(.failed(error.localizedDescription))
                 }
                 continuation.finish()
             }
@@ -68,6 +73,8 @@ actor ModelDownloader {
         return [remote, mirror]
     }
 
+    /// 每次请求最多 chunkSize 字节，URLSession 下载到磁盘临时文件后再追加入 .part；
+    /// 内存占用恒定（~4MB 拷贝块），不会把 1.5–3GB 模型整体读进内存。
     private static func fetchChunked(from url: URL, using session: URLSession,
                                      partURL: URL, dest: URL, label: String,
                                      report: @escaping (Double, String) -> Void) async throws {
@@ -88,24 +95,31 @@ actor ModelDownloader {
             try Task.checkCancellation()
 
             var request = URLRequest(url: url, timeoutInterval: 120)
-            request.setValue("bytes=\(offset)-", forHTTPHeaderField: "Range")
-            let (data, response) = try await session.data(for: request)
+            let chunkEnd = offset + Self.chunkSize - 1
+            request.setValue("bytes=\(offset)-\(chunkEnd)", forHTTPHeaderField: "Range")
+            let (tmpURL, response) = try await session.download(for: request)
+            defer { try? FileManager.default.removeItem(at: tmpURL) }
+
             guard let http = response as? HTTPURLResponse else {
                 throw DownloadError(message: "非 HTTP 响应")
             }
 
-            var completedBy416 = false
+            var completed = false
             switch http.statusCode {
             case 206:
                 break  // 正常续传
             case 200:
-                // 服务器不支持 Range：从头写
+                // 服务器忽略 Range：返回的是完整文件，从头写
                 offset = 0
                 try file.truncate(atOffset: 0)
             case 416:
-                // Content-Range 的 Z 即文件总大小（HTTP 规范），offset 已到末尾 = 下载完成
+                // Content-Range: bytes */Z
+                if let range = http.value(forHTTPHeaderField: "Content-Range"),
+                   let z = Int64(range.split(separator: "/").last ?? "") {
+                    total = z
+                }
                 if total > 0 && offset >= total {
-                    completedBy416 = true
+                    completed = true
                 } else {
                     try? FileManager.default.removeItem(at: partURL)
                     throw DownloadError(message: "续传点失效，已重置（重试即可）")
@@ -113,30 +127,38 @@ actor ModelDownloader {
             default:
                 throw DownloadError(message: "HTTP \(http.statusCode)")
             }
+            if completed { break }
 
-            if completedBy416 { break }
-
-            // 从 Content-Range: bytes X-Y/Z 取总大小（Z = 文件总字节数，不是末字节+1）
-            if total < 0, let rangeHeader = http.value(forHTTPHeaderField: "Content-Range"),
-               let zPart = rangeHeader.split(separator: "/").last, let z = Int64(zPart) {
+            // Content-Range: bytes X-Y/Z（Z = 文件总字节数）
+            if total < 0, let range = http.value(forHTTPHeaderField: "Content-Range"),
+               let z = Int64(range.split(separator: "/").last ?? "") {
                 total = z
             } else if total < 0, http.expectedContentLength > 0 {
-                total = http.expectedContentLength + offset
+                total = http.expectedContentLength + (http.statusCode == 206 ? offset : 0)
             }
 
-            try file.write(contentsOf: data)
-            offset += Int64(data.count)
-
-            if total > 0 {
-                let frac = Double(offset) / Double(total)
-                report(min(frac, 1.0),
-                       "\(label) \(ByteCountFormatter.string(fromByteCount: offset, countStyle: .file)) / \(ByteCountFormatter.string(fromByteCount: total, countStyle: .file))")
+            // 临时文件 → .part，按 4MB 块拷贝并节流上报
+            let input = try FileHandle(forReadingFrom: tmpURL)
+            defer { try? input.close() }
+            var copied: Int64 = 0
+            while let data = try input.read(upToCount: 4 << 20), !data.isEmpty {
+                try Task.checkCancellation()
+                try file.write(contentsOf: data)
+                offset += Int64(data.count)
+                copied += Int64(data.count)
+                if total > 0 {
+                    let frac = Double(offset) / Double(total)
+                    report(min(frac, 1.0),
+                           "\(label) \(ByteCountFormatter.string(fromByteCount: offset, countStyle: .file)) / \(ByteCountFormatter.string(fromByteCount: total, countStyle: .file))")
+                } else {
+                    report(-1, "\(label) \(ByteCountFormatter.string(fromByteCount: offset, countStyle: .file))")
+                }
             }
 
-            if total > 0 && offset >= total {
-                break
-            }
-            if data.isEmpty {
+            // 200 = 整文件已写完；206 按总大小判断是否收尾
+            if http.statusCode == 200 { break }
+            if total > 0 && offset >= total { break }
+            if copied == 0 {
                 throw DownloadError(message: "服务器提前断流")
             }
         }

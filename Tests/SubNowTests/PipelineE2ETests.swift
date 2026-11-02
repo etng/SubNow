@@ -56,7 +56,7 @@ final class PipelineE2ETests: XCTestCase {
         let ass = try String(contentsOf: outDir.appendingPathComponent("test.ass"), encoding: .utf8)
         XCTAssertTrue(ass.contains("PlayResX: 1920"), "ASS 应有 PlayRes")
         XCTAssertTrue(ass.contains("Style: Zh,PingFang SC,56,&H00FFFFFF"), "中文字样式应精确匹配")
-        XCTAssertTrue(ass.contains("Style: Org,PingFang SC,38,&H00850AD0"), "原文金样式应精确匹配")
+        XCTAssertTrue(ass.contains("Style: Org,PingFang SC,38,&H0050A8D0"), "原文金样式应精确匹配")
         XCTAssertTrue(ass.contains("{\\rZh}"), "Dialogue 应用 \\r 覆写")
         XCTAssertTrue(ass.contains("\\N"), "双语应两行")
         let srt = try String(contentsOf: outDir.appendingPathComponent("test.en.srt"), encoding: .utf8)

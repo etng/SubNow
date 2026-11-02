@@ -8,9 +8,19 @@ cd "$(dirname "$0")/.."
 
 APP_NAME="SubNow"
 BID="com.y10n.subnow"
-VERSION="1.0.0"
+VERSION="$(tr -d '[:space:]' < VERSION)"
+BUILD_NUMBER="${BUILD_NUMBER:-${GITHUB_RUN_NUMBER:-$(git rev-list --count HEAD 2>/dev/null || date -u +%Y%m%d%H%M)}}"
+BUILD_TIME="${BUILD_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+GIT_COMMIT="${GIT_COMMIT:-$(git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)}"
 BUILD_DIR=".build/out/Products/Release"
 APP="dist/${APP_NAME}.app"
+
+if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "✗ VERSION 不是合法 SemVer（需要 X.Y.Z）: $VERSION"
+    exit 1
+fi
+
+echo "▶ 版本 ${VERSION}（build ${BUILD_NUMBER}，${BUILD_TIME}，${GIT_COMMIT}）"
 
 echo "▶ ① Release 构建（arm64）..."
 swift build -c release --arch arm64
@@ -44,7 +54,9 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundlePackageType</key>             <string>APPL</string>
     <key>CFBundleInfoDictionaryVersion</key>   <string>6.0</string>
     <key>CFBundleShortVersionString</key>      <string>${VERSION}</string>
-    <key>CFBundleVersion</key>                 <string>${VERSION}</string>
+    <key>CFBundleVersion</key>                 <string>${BUILD_NUMBER}</string>
+    <key>SUBuildTime</key>                     <string>${BUILD_TIME}</string>
+    <key>SUGitCommit</key>                     <string>${GIT_COMMIT}</string>
     <key>CFBundleIconFile</key>                <string>AppIcon</string>
     <key>CFBundleDevelopmentRegion</key>       <string>zh_CN</string>
     <key>LSMinimumSystemVersion</key>          <string>14.0</string>
@@ -67,7 +79,7 @@ echo "✓ 打包完成: $APP"
 
 if [ "${1:-}" = "--install" ]; then
     echo "▶ ⑤ 安装到 /Applications..."
-    # 先确认没有运行中的实例（历史 build_app.sh 的教训：进程没死就 rm -rf 会出连环问题）
+    # 先确认没有运行中的实例（进程未退出就覆盖会出问题）
     if pgrep -f "${APP_NAME}.app/Contents/MacOS/${APP_NAME}" >/dev/null 2>&1; then
         echo "✗ 检测到 ${APP_NAME} 正在运行，请先从菜单栏退出后再安装"
         exit 1

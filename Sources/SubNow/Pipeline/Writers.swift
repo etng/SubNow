@@ -1,7 +1,7 @@
 import Foundation
 
 /// 字幕文件写入：SRT（原文/纯中文）与双语 ASS（正排/反排）。
-/// ASS 样式精确移植POC 调研结果：PlayRes 1920×1080、中文白 56 粗体在上、原文金 #D0A850 38 粗体在下。
+/// ASS 样式：PlayRes 1920×1080、中文白 56 粗体在上、原文金 #D0A850 38 粗体在下。
 enum Writers {
     // MARK: - 时间戳
 
@@ -14,7 +14,7 @@ enum Writers {
         return String(format: "%02d:%02d:%02d,%03d", h, m, s, millis)
     }
 
-    /// ASS 时间：H:MM:SS.CC（小时不补零——与历史实现一致）
+    /// ASS 时间：H:MM:SS.CC（小时不补零）
     static func tsAss(_ ms: Int) -> String {
         let cs = max(ms, 0) / 10
         let h = cs / 360_000
@@ -56,11 +56,18 @@ enum Writers {
         [V4+ Styles]
         Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
         Style: Zh,PingFang SC,56,&H00FFFFFF,&H000000FF,&H00000000,&H96000000,1,0,0,0,100,100,0,0,1,1.6,0.8,2,60,60,40,1
-        Style: Org,PingFang SC,38,&H00850AD0,&H000000FF,&H00000000,&H96000000,1,0,0,0,100,100,0,0,1,1.3,0.6,2,60,60,40,1
+        Style: Org,PingFang SC,38,&H0050A8D0,&H000000FF,&H00000000,&H96000000,1,0,0,0,100,100,0,0,1,1.3,0.6,2,60,60,40,1
 
         [Events]
         Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         """
+    }
+
+    /// ASS 文本转义：`\`、`{`、`}` 会被当作覆写标签，必须先转义再分行。
+    static func escapeAss(_ text: String) -> String {
+        text.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "{", with: "\\{")
+            .replacingOccurrences(of: "}", with: "\\}")
     }
 
     /// 双语 ASS。zhFirst=true：中文第 1 行（白）；false：原文在上（zh-bottom 变体）。
@@ -68,8 +75,8 @@ enum Writers {
         var out = assHeader() + "\n"
         let orgWidth = Segments.isCJK(language) ? 40 : 90
         for seg in segments {
-            let zh = Segments.wrapLine(seg.zh ?? "", width: 40, joiner: "\\N")
-            let org = Segments.wrapLine(seg.src, width: orgWidth, joiner: "\\N")
+            let zh = Segments.wrapLine(escapeAss(seg.zh ?? ""), width: 40, joiner: "\\N")
+            let org = Segments.wrapLine(escapeAss(seg.src), width: orgWidth, joiner: "\\N")
             let text: String
             if zhFirst {
                 text = "{\\rZh}\(zh)\\N{\\rOrg}\(org)"
@@ -96,5 +103,10 @@ enum Writers {
     static func readSegmentsFile(from url: URL) -> SegmentsFile? {
         guard let data = try? Data(contentsOf: url) else { return nil }
         return try? JSONDecoder().decode(SegmentsFile.self, from: data)
+    }
+
+    /// 原文 SRT 文件名：中文源不要再写 `.<lang>.srt`，否则会与最终 `<stem>.zh.srt` 同名覆盖。
+    static func originalSrtName(stem: String, language: String) -> String {
+        language == "zh" ? "\(stem).orig.srt" : "\(stem).\(language).srt"
     }
 }

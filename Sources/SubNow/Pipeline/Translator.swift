@@ -14,7 +14,7 @@ protocol TranslatorProvider {
                         lineLen: Int) async throws -> [Int: String]
 }
 
-// MARK: - 提示词（POC 调研结果 system prompt 原文照搬）
+// MARK: - 提示词（system prompt 固定）
 
 enum Prompts {
     static func system(_ sourceLanguageName: String, lineLen: Int) -> String {
@@ -121,7 +121,7 @@ struct OllamaProvider: TranslatorProvider {
             "options": ["temperature": 0.2, "num_ctx": 8192],
             "format": Prompts.ollamaSchema,
         ]
-        // 单行兜底时精简 prompt（与POC 调研结果一致：只发这一行）
+        // 单行兜底时精简 prompt（只发这一行）
         if lines.count == 1 && context.isEmpty {
             body["messages"] = [
                 ["role": "user", "content":
@@ -150,7 +150,9 @@ struct OllamaProvider: TranslatorProvider {
     }
 
     static func chatURL(_ base: String) throws -> URL {
-        guard let url = URL(string: base.trimmingCharacters(in: .whitespaces) + "/api/chat") else {
+        var trimmed = base.trimmingCharacters(in: .whitespacesAndNewlines)
+        while trimmed.hasSuffix("/") { trimmed.removeLast() }
+        guard !trimmed.isEmpty, let url = URL(string: trimmed + "/api/chat") else {
             throw OllamaError(message: "Ollama 地址无效")
         }
         return url
@@ -190,8 +192,31 @@ struct OpenAICompatibleProvider: TranslatorProvider {
             ]
         }
 
-        var base = baseURL.trimmingCharacters(in: .whitespaces)
-        if base.hasSuffix("/") { base.removeLast() }
+        var (data, http) = try await send(body)
+
+        // 部分兼容服务不认 response_format；换回纯提示词 JSON 再试一次
+        if (400..<500).contains(http.statusCode), body["response_format"] != nil {
+            Log.warn("API 不支持 response_format（HTTP \(http.statusCode)），改用提示词约束重试")
+            body.removeValue(forKey: "response_format")
+            (data, http) = try await send(body)
+        }
+
+        guard (200..<300).contains(http.statusCode) else {
+            let snippet = String(data: data.prefix(300), encoding: .utf8) ?? ""
+            throw APIError(message: "API \(http.statusCode)：\(snippet)")
+        }
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let choices = obj["choices"] as? [[String: Any]],
+              let message = choices.first?["message"] as? [String: Any],
+              let content = message["content"] as? String else {
+            throw APIError(message: "API 响应格式不符")
+        }
+        return Prompts.parseTranslations(content)
+    }
+
+    private func send(_ body: [String: Any]) async throws -> (Data, HTTPURLResponse) {
+        var base = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        while base.hasSuffix("/") { base.removeLast() }
         if !base.hasSuffix("/chat/completions") { base += "/chat/completions" }
         guard let url = URL(string: base) else {
             throw APIError(message: "API 地址无效")
@@ -208,17 +233,7 @@ struct OpenAICompatibleProvider: TranslatorProvider {
         guard let http = response as? HTTPURLResponse else {
             throw APIError(message: "非 HTTP 响应")
         }
-        guard (200..<300).contains(http.statusCode) else {
-            let snippet = String(data: data.prefix(300), encoding: .utf8) ?? ""
-            throw APIError(message: "API \(http.statusCode)：\(snippet)")
-        }
-        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let choices = obj["choices"] as? [[String: Any]],
-              let message = choices.first?["message"] as? [String: Any],
-              let content = message["content"] as? String else {
-            throw APIError(message: "API 响应格式不符")
-        }
-        return Prompts.parseTranslations(content)
+        return (data, http)
     }
 }
 
@@ -233,7 +248,7 @@ struct NoneProvider: TranslatorProvider {
     }
 }
 
-// MARK: - 批处理框架（重试/逐行兜底/上下文——与POC 调研结果策略一致）
+// MARK: - 批处理框架（重试/逐行兜底/上下文）
 
 final class Translator {
     let provider: TranslatorProvider
@@ -279,10 +294,10 @@ final class Translator {
     }
 
     /// 全量翻译：30 行/批、前 2 行上下文、每批 3 次重试（缺行补发提示）、再失败逐行兜底；
-    /// 仍失败的行保留原文。onBatch(batchesDone, batchesTotal)。
+    /// 仍失败的行保留原文。onBatch(batchesDone, batchesTotal, 已译结果)——用于增量落盘。
     @MainActor
     func translate(segments: [Segment], language: String, lineLen: Int,
-                   onBatch: ((Int, Int) -> Void)?,
+                   onBatch: ((Int, Int, [Int: String]) -> Void)?,
                    isCancelled: @escaping () -> Bool) async throws -> [Int: String] {
         let langName = Segments.langName(language == "orig" ? "" : language)
         let pending = segments.indices.filter { (segments[$0].zh ?? "").isEmpty }
@@ -348,7 +363,7 @@ final class Translator {
                 }
             }
 
-            onBatch?(done + 1, total)
+            onBatch?(done + 1, total, results)
         }
         return results
     }
@@ -360,9 +375,19 @@ final class Translator {
 struct AppleFMProvider: TranslatorProvider {
     let label = "Apple 系统模型"
 
+    struct FMError: LocalizedError {
+        let message: String
+        var errorDescription: String? { message }
+    }
+
     func translateBatch(ids: [Int], lines: [String], context: [(String, String)],
                         sourceLanguageName: String, lineLen: Int) async throws -> [Int: String] {
-        let session = LanguageModelSession(model: SystemLanguageModel.default)
+        guard case .available = SystemLanguageModel.default.availability else {
+            throw FMError(message: "Apple 系统模型不可用：\(AppleFMAvailability.unavailableReason)")
+        }
+        let session = LanguageModelSession(
+            model: SystemLanguageModel.default,
+            instructions: Prompts.system(sourceLanguageName, lineLen: lineLen))
         let prompt = Prompts.user(context: context, batch: Array(zip(ids, lines)),
                                   sourceLanguageName: sourceLanguageName)
         let options = GenerationOptions(temperature: 0.2)

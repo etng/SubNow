@@ -7,12 +7,12 @@ MainActor.assumeIsolated {
     Log.setup()
     Paths.ensureAll()
     Paths.installMetalResourceHint()
-    Log.info("SubNow 启动 pid=\(ProcessInfo.processInfo.processIdentifier)")
+    Log.info("SubNow 启动 pid=\(ProcessInfo.processInfo.processIdentifier) \(BuildInfo.summary)")
 
     let app = NSApplication.shared
     let delegate = AppDelegate()
     app.delegate = delegate
-    app.mainMenu = AppMenu.make()  // 无主菜单则 ⌘Q/⌘W/编辑快捷键全部失效——历史应用的教训
+    app.mainMenu = AppMenu.make()  // 无主菜单则 ⌘Q/⌘W/编辑快捷键全部失效
 
     guard SingleInstance.acquire() else {
         SingleInstance.conflictAlertAndExit()

@@ -14,9 +14,28 @@ final class PlayerMonitor {
         let loadedChineseSubtitle: Bool?  // 仅 IPC 可判定
     }
 
+    /// IPC 三态：可用 / 播放器在跑但没配置 / 配置了但连不上
+    enum IPCStatus: Equatable {
+        case noPlayer
+        case connected(socket: String)
+        case notConfigured(player: String)
+        case failed(socket: String, reason: String)
+
+        var hint: String? {
+            switch self {
+            case .noPlayer, .connected:
+                return nil
+            case .notConfigured(let player):
+                return "\(player) 尚未开启联动：点击查看设置方法（可自动加载字幕）"
+            case .failed(let socket, _):
+                return "连接失败（\(socket)）：点击查看排查方法"
+            }
+        }
+    }
+
     struct Snapshot {
         let playbacks: [Playback]
-        let iinaConfiguredForIPC: Bool   // IINA 在跑但无 socket → 设置界面要提醒
+        let ipcStatus: IPCStatus
     }
 
     /// 菜单栏展示用的播放摘要
@@ -53,7 +72,6 @@ final class PlayerMonitor {
 
     private var task: Task<Void, Never>?
     private var lastSnapshot: Snapshot?
-    private var lastIINAWithoutIPC = false
     private let argvCache = ArgvSocketCache()
 
     /// 每轮轮询回调（主线程）
@@ -67,7 +85,6 @@ final class PlayerMonitor {
                 let config = await FrozenConfig(from: Config.shared)
                 let snapshot = await Self.poll(config: config, argvCache: self.argvCache)
                 self.lastSnapshot = snapshot
-                self.lastIINAWithoutIPC = snapshot.iinaConfiguredForIPC
                 self.onPlayback?(snapshot)
                 try? await Task.sleep(nanoseconds: UInt64(config.pollSeconds * 1_000_000_000))
             }
@@ -80,7 +97,7 @@ final class PlayerMonitor {
         task = nil
     }
 
-    var iinaNeedsIPCSetup: Bool { lastIINAWithoutIPC }
+    var ipcStatus: IPCStatus? { lastSnapshot?.ipcStatus }
     var currentSnapshot: Snapshot? { lastSnapshot }
 
     // MARK: - 轮询实现（后台）
@@ -90,7 +107,8 @@ final class PlayerMonitor {
 
         var playbacks: [Playback] = []
         var seenPaths = Set<String>()
-        var iinaWithoutIPC = false
+        var connectedSocket: String?
+        var failedSocket: (String, String)?
 
         for (pid, name) in players {
             let sockets = socketCandidates(for: name, pid: pid, config: config, argvCache: argvCache)
@@ -98,42 +116,51 @@ final class PlayerMonitor {
             // ① IPC 优先：能报出 path 就信任 socket
             var handled = false
             for sock in sockets {
-                guard let path = MpvIPC.currentPath(socketPath: sock) else { continue }
-                handled = true
-                guard VideoProbe.isVideoFile(URL(fileURLWithPath: path)),
-                      !seenPaths.contains(path),
-                      fileSizeOK(path, minMB: config.minFileMB) else { break }
-                let tracks = MpvIPC.trackList(socketPath: sock)
-                let hasZH = tracks.map { MpvIPC.hasChineseSubtitleTrack(tracks: $0) }
-                playbacks.append(Playback(player: name, pid: pid, videoPath: path,
-                                          viaIPC: true, socketPath: sock,
-                                          loadedChineseSubtitle: hasZH))
-                seenPaths.insert(path)
-                break
+                if let path = MpvIPC.currentPath(socketPath: sock) {
+                    handled = true
+                    connectedSocket = connectedSocket ?? sock
+                    guard VideoProbe.isVideoFile(URL(fileURLWithPath: path)),
+                          !seenPaths.contains(path),
+                          fileSizeOK(path, minMB: config.minFileMB) else { break }
+                    let tracks = MpvIPC.trackList(socketPath: sock)
+                    let hasZH = tracks.map { MpvIPC.hasChineseSubtitleTrack(tracks: $0) }
+                    playbacks.append(Playback(player: name, pid: pid, videoPath: path,
+                                              viaIPC: true, socketPath: sock,
+                                              loadedChineseSubtitle: hasZH))
+                    seenPaths.insert(path)
+                    break
+                }
+                if failedSocket == nil, FileManager.default.fileExists(atPath: sock) {
+                    failedSocket = (sock, "socket 存在但无法读取播放路径（播放器可能未就绪或权限不足）")
+                }
             }
-            if handled {
-                if name == "IINA" { iinaWithoutIPC = false }
-                continue
-            }
+            if handled { continue }
 
             // ② lsof 兜底（播放器在跑但拿不到 IPC）
-            guard let video = await openVideoFile(pid: pid) else {
-                if name == "IINA" { iinaWithoutIPC = true }
-                continue
-            }
+            guard let video = await openVideoFile(pid: pid) else { continue }
             if seenPaths.contains(video.path) { continue }
             guard fileSizeOK(video.path, minMB: config.minFileMB) else { continue }
             playbacks.append(Playback(player: name, pid: pid, videoPath: video.path,
                                       viaIPC: false, socketPath: nil,
                                       loadedChineseSubtitle: nil))
             seenPaths.insert(video.path)
-            if name == "IINA" { iinaWithoutIPC = false }
         }
 
-        return Snapshot(playbacks: playbacks, iinaConfiguredForIPC: iinaWithoutIPC)
+        let status: IPCStatus
+        if players.isEmpty {
+            status = .noPlayer
+        } else if let sock = connectedSocket {
+            status = .connected(socket: sock)
+        } else if let (sock, reason) = failedSocket {
+            status = .failed(socket: sock, reason: reason)
+        } else {
+            status = .notConfigured(player: players.contains(where: { $0.1 == "IINA" }) ? "IINA" : "mpv")
+        }
+        return Snapshot(playbacks: playbacks, ipcStatus: status)
     }
 
-    /// 找运行中的播放器：GUI 应用按 Bundle ID，mpv CLI 按可执行名
+    /// 找运行中的播放器：GUI 应用按 Bundle ID，mpv CLI 按可执行名。
+    /// 前台播放器排第一，多播放器时优先展示用户正在看的那个。
     nonisolated private static func findPlayers() -> [(Int32, String)] {
         var result: [(Int32, String)] = []
         for app in NSWorkspace.shared.runningApplications {
@@ -150,10 +177,16 @@ final class PlayerMonitor {
                 result.append((pid, "mpv"))
             }
         }
+        let frontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        if let frontmost, result.count > 1 {
+            result.sort { a, b in
+                (a.0 == frontmost ? 0 : 1) < (b.0 == frontmost ? 0 : 1)
+            }
+        }
         return result
     }
 
-    /// socket 候选：用户自定义 → argv 里的 --input-ipc-server（仅 mpv）→ 默认/默认候选
+    /// socket 候选：用户自定义 → argv 里的 --input-ipc-server（仅 mpv）→ 默认候选
     nonisolated private static func socketCandidates(for player: String, pid: Int32,
                                                      config: FrozenConfig,
                                                      argvCache: ArgvSocketCache) -> [String] {
@@ -171,14 +204,23 @@ final class PlayerMonitor {
         return list
     }
 
-    /// lsof 找该进程打开的视频文件（第一条命中；排除系统目录）
+    /// lsof 找该进程打开的视频文件（第一条命中；排除系统目录）。
+    /// 输出重定向到临时文件而非管道：等进程退出后再读，避免大输出写满管道导致 10s 超时。
     nonisolated private static func openVideoFile(pid: Int32) async -> URL? {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
         p.arguments = ["-p", String(pid), "-F", "n"]
-        let pipe = Pipe()
-        p.standardOutput = pipe
         p.standardError = FileHandle.nullDevice
+
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("subnow-lsof-\(pid)-\(UUID().uuidString).txt")
+        FileManager.default.createFile(atPath: tmp.path, contents: nil)
+        guard let out = try? FileHandle(forWritingTo: tmp) else { return nil }
+        defer {
+            try? out.close()
+            try? FileManager.default.removeItem(at: tmp)
+        }
+        p.standardOutput = out
 
         do {
             try p.run()
@@ -189,7 +231,9 @@ final class PlayerMonitor {
                 p.terminate()
                 return nil
             }
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            try? out.synchronize()
+            try? out.close()
+            let data = (try? Data(contentsOf: tmp)) ?? Data()
             guard let text = String(data: data, encoding: .utf8) else { return nil }
             let home = NSHomeDirectory()
             for line in text.split(separator: "\n") {

@@ -4,7 +4,7 @@ import Darwin
 /// 单实例守卫：双保险。
 /// 1) 打包后的 .app：按 Bundle ID 查 NSRunningApplication（进程死了无残留，最可靠）；
 /// 2) swift run 开发模式（无 Bundle ID）：flock 文件锁（内核随进程释放，无 stale 问题）。
-/// 冲突时必须给出提示——历史应用静默 exit(0)，双击图标没反应，是大忌。
+/// 冲突时必须给出提示——静默 exit(0) 会让用户双击图标没反应，是大忌。
 enum SingleInstance {
     private static var lockFD: Int32 = -1
 

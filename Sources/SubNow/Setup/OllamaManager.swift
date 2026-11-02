@@ -12,6 +12,7 @@ actor OllamaManager {
     enum PullEvent {
         case progress(fraction: Double, status: String)
         case done
+        case failed(String)
     }
 
     private var cachedModels: [String] = []
@@ -41,8 +42,11 @@ actor OllamaManager {
                         continuation.yield(.progress(fraction: frac, status: status))
                     }
                     continuation.yield(.done)
+                } catch is CancellationError {
+                    continuation.yield(.failed("已取消"))
                 } catch {
                     Log.error("拉取模型失败 \(model): \(error.localizedDescription)")
+                    continuation.yield(.failed(error.localizedDescription))
                 }
                 continuation.finish()
             }
@@ -82,16 +86,18 @@ actor OllamaManager {
     }
 
     private func tagsURL(_ base: String) throws -> URL {
-        guard let url = URL(string: base.trimmingCharacters(in: .whitespaces)
-            .appending("/api/tags")) else {
-            throw OllamaError(message: "Ollama 地址无效")
-        }
-        return url
+        try Self.endpoint(base, "/api/tags")
     }
 
     private static func pullURL(_ base: String) throws -> URL {
-        guard let url = URL(string: base.trimmingCharacters(in: .whitespaces)
-            .appending("/api/pull")) else {
+        try endpoint(base, "/api/pull")
+    }
+
+    /// 兼容末尾带斜杠的地址，避免拼出 //api/tags
+    private static func endpoint(_ base: String, _ path: String) throws -> URL {
+        var trimmed = base.trimmingCharacters(in: .whitespacesAndNewlines)
+        while trimmed.hasSuffix("/") { trimmed.removeLast() }
+        guard !trimmed.isEmpty, let url = URL(string: trimmed + path) else {
             throw OllamaError(message: "Ollama 地址无效")
         }
         return url

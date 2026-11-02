@@ -8,8 +8,7 @@ final class SubNowTests: XCTestCase {
         XCTAssertEqual(Paths.stateFile.lastPathComponent, "state.json")
     }
 
-    func testSocketCandidatesContainLegacy() {
-        XCTAssertTrue(Paths.socketCandidates.contains("/tmp/poc-mpv.sock"))
+    func testSocketCandidatesContainDefault() {
         XCTAssertTrue(Paths.socketCandidates.contains("/tmp/subnow-mpv.sock"))
     }
 }

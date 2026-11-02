@@ -97,15 +97,27 @@ final class Notify: NSObject, UNUserNotificationCenterDelegate {
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
                                             didReceive response: UNNotificationResponse,
                                             withCompletionHandler completionHandler: @escaping () -> Void) {
-        let path = response.notification.request.content.userInfo["path"] as? String ?? ""
+        let request = response.notification.request
+        let path = request.content.userInfo["path"] as? String ?? ""
+        let category = request.content.categoryIdentifier
         let action: Action?
         switch response.actionIdentifier {
-        case "GENERATE", UNNotificationDefaultActionIdentifier:
+        case "GENERATE":
             action = path.isEmpty ? nil : .generate(videoPath: path)
         case "SKIP":
             action = path.isEmpty ? nil : .skip(videoPath: path)
         case "OPEN_SETTINGS":
             action = .openSettings
+        case UNNotificationDefaultActionIdentifier:
+            // 默认点击按通知类别分流：NOT_READY 只跳设置，绝不能绕过就绪门槛触发生成
+            switch category {
+            case Self.categoryOffer:
+                action = path.isEmpty ? nil : .generate(videoPath: path)
+            case Self.categoryNotReady:
+                action = .openSettings
+            default:
+                action = nil
+            }
         default:
             action = nil
         }

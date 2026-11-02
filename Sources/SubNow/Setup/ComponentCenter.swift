@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationModels)
+import FoundationModels
+#endif
 
 /// 组件就绪状态机。规则：全部必需组件就绪才允许"可生成"提醒；
 /// 未就绪时只提示"尚未就绪"，绝不触发流水线。
@@ -51,15 +54,23 @@ final class ComponentCenter {
     // MARK: - 探测
 
     func refresh() {
-        statuses[.ffmpeg] = probeFFmpeg()
-        statuses[.draftModel] = probeModel(.draftModel, Config.shared.draftModelURL, minBytes: 1_000_000_000,
-                                           name: "转录草稿模型（turbo）")
-        statuses[.vadModel] = probeModel(.vadModel, Config.shared.vadModelURL, minBytes: 500_000,
-                                         name: "Silero VAD 模型")
-        statuses[.finalModel] = probeModel(.finalModel, Config.shared.finalModelURL, minBytes: 2_500_000_000,
-                                           name: "转录精做模型（large-v3）", isRequired: false)
+        applyProbe(probeFFmpeg())
+        applyProbe(probeModel(.draftModel, Config.shared.draftModelURL, minBytes: 1_000_000_000,
+                              name: "转录草稿模型（turbo）"))
+        applyProbe(probeModel(.vadModel, Config.shared.vadModelURL, minBytes: 500_000,
+                              name: "Silero VAD 模型"))
+        applyProbe(probeModel(.finalModel, Config.shared.finalModelURL, minBytes: 2_500_000_000,
+                              name: "转录精做模型（large-v3）", isRequired: false))
         statuses[.translation] = Status(id: .translation, state: translationState(), required: true)
         notifyObservers()
+    }
+
+    /// 下载进行中不要被 refresh 覆盖回 missing，否则 UI 的进度/取消按钮会闪没。
+    private func applyProbe(_ status: Status) {
+        if downloadingTasks[status.id] != nil, case .downloading = statuses[status.id]?.state {
+            return
+        }
+        statuses[status.id] = status
     }
 
     func status(_ id: ComponentID) -> Status? { statuses[id] }
@@ -106,8 +117,13 @@ final class ComponentCenter {
     // MARK: - 探测实现
 
     private func probeFFmpeg() -> Status {
-        if let url = FFmpegLocator.locate() {
-            return Status(id: .ffmpeg, state: .ready(detail: url.path), required: true)
+        let ffmpeg = FFmpegLocator.locate()
+        let ffprobe = FFmpegLocator.locateFFprobe()
+        if let ffmpeg, let ffprobe {
+            return Status(id: .ffmpeg, state: .ready(detail: "\(ffmpeg.path) · \(ffprobe.path)"), required: true)
+        }
+        if let ffmpeg {
+            return Status(id: .ffmpeg, state: .broken(detail: "找到 ffmpeg（\(ffmpeg.path)），但缺 ffprobe（字幕轨探测会失效）"), required: true)
         }
         return Status(id: .ffmpeg, state: .missing(detail: "未找到 ffmpeg（brew 或手动安装均可）"), required: true)
     }
@@ -132,7 +148,7 @@ final class ComponentCenter {
             if let detail = AppleFMAvailability.describe() {
                 return .ready(detail: detail)
             }
-            return .missing(detail: "Apple 系统模型不可用（需 macOS 26+ 且开启 Apple Intelligence）")
+            return .missing(detail: "Apple 系统模型不可用：\(AppleFMAvailability.unavailableReason)")
         case .openAICompatible:
             let cfg = Config.shared
             if cfg.openAIBaseURL.isEmpty || cfg.openAIModel.isEmpty {
@@ -149,7 +165,6 @@ final class ComponentCenter {
         let cfg = Config.shared
         guard cfg.translationKind == .ollama else { return }
         let baseURL = cfg.ollamaURL
-        let needed = [cfg.ollamaDraftModel, cfg.ollamaFinalModel]
         Task { @MainActor in
             let models = (try? await OllamaManager.shared.listModels(baseURL: baseURL)) ?? []
             let state: State
@@ -191,28 +206,54 @@ final class ComponentCenter {
         default:
             return
         }
-        statuses[id]?.state = .downloading(progress: 0, detail: "连接中…")
+        let required = statuses[id]?.required ?? (id != .finalModel)
+        statuses[id] = Status(id: id, state: .downloading(progress: 0, detail: "连接中…"), required: required)
         notifyObservers()
         downloadingTasks[id] = Task { @MainActor in
-            defer { downloadingTasks[id] = nil }
+            defer {
+                downloadingTasks[id] = nil
+                notifyObservers()
+            }
             do {
                 let stream = try await ModelDownloader.shared.download(
                     remote: spec.url, to: spec.dest, label: spec.label)
-                for await progress in stream {
-                    if Task.isCancelled { return }
-                    switch progress {
-                    case .progress(let frac, let detail):
-                        statuses[id]?.state = .downloading(progress: frac, detail: detail)
-                        notifyObservers()
-                    case .finished:
+                for await event in stream {
+                    if Task.isCancelled {
+                        downloadingTasks[id] = nil
                         refresh()
                         return
                     }
+                    switch event {
+                    case .progress(let frac, let detail):
+                        statuses[id] = Status(id: id, state: .downloading(progress: frac, detail: detail),
+                                              required: required)
+                        notifyObservers()
+                    case .finished:
+                        downloadingTasks[id] = nil
+                        refresh()
+                        return
+                    case .failed(let message):
+                        if Task.isCancelled || message == "已取消" {
+                            downloadingTasks[id] = nil
+                            refresh()
+                        } else {
+                            statuses[id] = Status(id: id, state: .broken(detail: "下载失败：\(message)"),
+                                                  required: required)
+                            notifyObservers()
+                        }
+                        return
+                    }
+                }
+                if Task.isCancelled {
+                    downloadingTasks[id] = nil
+                    refresh()
                 }
             } catch is CancellationError {
+                downloadingTasks[id] = nil
                 refresh()
             } catch {
-                statuses[id]?.state = .broken(detail: "下载失败：\(error.localizedDescription)")
+                statuses[id] = Status(id: id, state: .broken(detail: "下载失败：\(error.localizedDescription)"),
+                                      required: required)
                 notifyObservers()
             }
         }
@@ -245,19 +286,25 @@ enum HFSource {
 
 enum FFmpegLocator {
     /// 搜索顺序：App 支持目录（手动/下载安装）→ Homebrew → 系统路径 → PATH
-    static func locate() -> URL? {
+    static func locate() -> URL? { locateTool("ffmpeg") }
+
+    /// ffprobe 通常与 ffmpeg 同目录，但 Homebrew 用户可能只装了 ffmpeg；
+    /// 独立搜索一次，避免把"缺 ffprobe"误判为整体就绪。
+    static func locateFFprobe() -> URL? { locateTool("ffprobe") }
+
+    static func locateTool(_ name: String) -> URL? {
         let candidates = [
-            Paths.binDir.appendingPathComponent("ffmpeg").path,
-            "/opt/homebrew/bin/ffmpeg",
-            "/usr/local/bin/ffmpeg",
-            "/usr/bin/ffmpeg",
+            Paths.binDir.appendingPathComponent(name).path,
+            "/opt/homebrew/bin/\(name)",
+            "/usr/local/bin/\(name)",
+            "/usr/bin/\(name)",
         ]
         for c in candidates where FileManager.default.isExecutableFile(atPath: c) {
             return URL(fileURLWithPath: c)
         }
         let path = ProcessInfo.processInfo.environment["PATH"] ?? ""
         for dir in path.split(separator: ":") {
-            let p = URL(fileURLWithPath: String(dir)).appendingPathComponent("ffmpeg").path
+            let p = URL(fileURLWithPath: String(dir)).appendingPathComponent(name).path
             if FileManager.default.isExecutableFile(atPath: p) { return URL(fileURLWithPath: p) }
         }
         return nil
@@ -266,8 +313,38 @@ enum FFmpegLocator {
 
 /// Apple Foundation Models（系统翻译模型）可用性
 enum AppleFMAvailability {
+    /// 可用时返回描述；不可用返回 nil（具体原因见 `unavailableReason`）。
     static func describe() -> String? {
-        guard #available(macOS 26, *) else { return nil }
-        return "Apple 系统模型（随 Apple Intelligence 提供）"
+        guard isReady else { return nil }
+        return "Apple 系统模型可用（随 Apple Intelligence 提供）"
+    }
+
+    static var isReady: Bool {
+        guard #available(macOS 26, *) else { return false }
+        #if canImport(FoundationModels)
+        if case .available = SystemLanguageModel.default.availability { return true }
+        #endif
+        return false
+    }
+
+    static var unavailableReason: String {
+        guard #available(macOS 26, *) else { return "需要 macOS 26 或更高版本" }
+        #if canImport(FoundationModels)
+        switch SystemLanguageModel.default.availability {
+        case .available:
+            return ""
+        case .unavailable(let reason):
+            switch reason {
+            case .deviceNotEligible: return "此设备不支持 Apple Intelligence"
+            case .appleIntelligenceNotEnabled: return "请在系统设置中开启 Apple Intelligence"
+            case .modelNotReady: return "系统模型尚未下载完成，请稍后重试"
+            @unknown default: return "系统模型不可用"
+            }
+        @unknown default:
+            return "系统模型不可用"
+        }
+        #else
+        return "当前 SDK 不支持 Foundation Models"
+        #endif
     }
 }

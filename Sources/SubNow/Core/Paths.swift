@@ -1,6 +1,6 @@
 import Foundation
 
-/// 所有路径常量的唯一出处——POC 调研结果四份文件各自硬编码同一路径导致漂移，禁止重蹈。
+/// 所有路径常量的唯一出处，避免多处硬编码导致漂移。
 enum Paths {
     static let home = FileManager.default.homeDirectoryForCurrentUser
 
@@ -19,11 +19,11 @@ enum Paths {
         .appendingPathComponent("Logs", isDirectory: true)
         .appendingPathComponent("SubNow.log")
 
-    /// 模型目录：默认沿用POC 调研结果位置，已有的模型直接复用（可在设置中更改）。
+    /// 模型目录：默认位置；已有模型直接复用（可在设置中更改）。
     static let defaultModelsDir: URL = home.appendingPathComponent("models/whisper-cpp", isDirectory: true)
 
-    /// mpv/IINA IPC socket 候选：新默认 + POC 调研结果兼容。
-    static var socketCandidates: [String] { ["/tmp/subnow-mpv.sock", "/tmp/poc-mpv.sock"] }
+    /// mpv/IINA IPC socket 默认候选（自定义路径由设置项另行附加）。
+    static var socketCandidates: [String] { ["/tmp/subnow-mpv.sock"] }
 
     static func ensureAll() {
         let dirs = [appSupport, binDir, tmpDir, logFile.deletingLastPathComponent(), defaultModelsDir]

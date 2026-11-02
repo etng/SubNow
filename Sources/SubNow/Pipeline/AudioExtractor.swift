@@ -1,15 +1,14 @@
 import Foundation
 
 /// 音频提取：ffmpeg → 16kHz 单声道 PCM16 wav（whisper 输入格式，桥内严格校验）。
+/// 超时由上层 withTimeout 统一控制（置取消标记 → 本函数杀进程），这里不再维护第二层超时。
 enum AudioExtractor {
     struct ExtractError: LocalizedError {
         let message: String
         var errorDescription: String? { message }
     }
 
-    /// timeout 秒后强杀（提取卡死不拖垮任务）
     static func extract(video: URL, to wav: URL, ffmpeg: URL,
-                        timeout: TimeInterval = 600,
                         isCancelled: @escaping () -> Bool) async throws {
         let process = Process()
         process.executableURL = ffmpeg
@@ -23,31 +22,23 @@ enum AudioExtractor {
         process.standardOutput = FileHandle.nullDevice
 
         try process.run()
+        ProcessRegistry.shared.register(process)
         defer {
+            ProcessRegistry.shared.unregister(process)
             if process.isRunning { process.terminate() }
         }
 
-        // 取消 → 立即终止
+        // 取消/超时 → 立即终止；外层 Task 被取消时同样要杀进程，否则结构化并发会一直等它。
         let cancelWatch = Task {
-            while !Task.isCancelled {
-                if isCancelled() {
+            while true {
+                if isCancelled() || Task.isCancelled {
                     if process.isRunning { process.terminate() }
                     return
                 }
-                try? await Task.sleep(nanoseconds: 300_000_000)
+                try? await Task.sleep(nanoseconds: 200_000_000)
             }
         }
         defer { cancelWatch.cancel() }
-
-        // 超时强杀
-        let timeoutWatch = Task {
-            try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-            if process.isRunning {
-                Log.warn("音频提取超时（\(Int(timeout))s），强杀 ffmpeg")
-                process.terminate()
-            }
-        }
-        defer { timeoutWatch.cancel() }
 
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             process.terminationHandler = { proc in

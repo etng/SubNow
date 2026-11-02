@@ -1,7 +1,7 @@
 import Foundation
 
 /// 播放器记账（state.json）：避免对同一视频反复询问。
-/// 键 = path|size|mtime；失效规则与POC 调研结果一致：
+/// 键 = path|size|mtime；失效规则：
 /// - done / has-subs / failed / skipped：永久静默；
 /// - 但若记录声称"有外挂字幕"而字幕文件已被删除 → 作废，重新判定；
 /// - processing / draft-done：应用存活期间跳过；重启后变 queued-restart，重新触发。
@@ -17,9 +17,10 @@ actor PlayerBook {
     }
 
     private var records: [String: Record] = [:]
-    private let fileURL = Paths.stateFile
+    private let fileURL: URL
 
-    private init() {
+    init(fileURL: URL = Paths.stateFile) {
+        self.fileURL = fileURL
         load()
         // 重启后遗留的处理中/粗稿完成 → 重新可触发（等下次播放判定）
         for (key, var r) in records where r.status == "processing" || r.status == "draft-done" {
@@ -46,8 +47,14 @@ actor PlayerBook {
     }
 
     func set(_ status: String, for video: URL, sidecar: Bool, pid: Int? = nil) {
-        records[Self.key(for: video)] = Record(status: status, path: video.path,
-                                               sidecar: sidecar, updated: Date(), pid: pid)
+        let key = Self.key(for: video)
+        // 状态没变化就不写盘：轮询每 3 秒命中一次 has-subs，没必要反复原子写 state.json
+        if let existing = records[key], existing.status == status,
+           existing.sidecar == sidecar, existing.pid == pid {
+            return
+        }
+        records[key] = Record(status: status, path: video.path,
+                              sidecar: sidecar, updated: Date(), pid: pid)
         save()
     }
 
@@ -89,6 +96,14 @@ actor PlayerBook {
     /// 全部记录（设置界面展示用）
     func allRecords() -> [(key: String, record: Record)] {
         records.map { ($0.key, $0.value) }.sorted { $0.record.updated > $1.record.updated }
+    }
+
+    /// 上次崩溃/退出遗留、尚未完成的任务路径（菜单「恢复未完成任务」用）
+    func queuedRestartPaths() -> [String] {
+        records.values
+            .filter { $0.status == "queued-restart" }
+            .map(\.path)
+            .filter { FileManager.default.fileExists(atPath: $0) }
     }
 
     // MARK: - 持久化（原子写）

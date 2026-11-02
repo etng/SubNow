@@ -6,10 +6,13 @@ enum LogLevel: String {
 }
 
 /// 双通道日志：os.Logger（系统统一日志）+ ~/Library/Logs/SubNow.log（人肉排查用）。
+/// 所有文件操作与时间戳格式化都在同一个串行队列内完成（DateFormatter 非线程安全）。
 enum Log {
     private static let queue = DispatchQueue(label: "com.y10n.subnow.log")
     private static let oslog = Logger(subsystem: "com.y10n.subnow", category: "app")
     private static var fileHandle: FileHandle?
+    private static var bytesInFile: UInt64 = 0
+    private static let maxFileBytes: UInt64 = 5 * 1024 * 1024
     private static let formatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
@@ -17,16 +20,7 @@ enum Log {
     }()
 
     static func setup() {
-        queue.sync {
-            if fileHandle == nil {
-                let path = Paths.logFile.path
-                if !FileManager.default.fileExists(atPath: path) {
-                    FileManager.default.createFile(atPath: path, contents: nil)
-                }
-                fileHandle = try? FileHandle(forWritingTo: URL(fileURLWithPath: path))
-                try? fileHandle?.seekToEnd()
-            }
-        }
+        queue.sync { openIfNeeded() }
     }
 
     static func debug(_ msg: @autoclosure () -> String) { write(.debug, msg()) }
@@ -40,18 +34,41 @@ enum Log {
     }
 
     private static func write(_ level: LogLevel, _ msg: @autoclosure () -> String) {
-        let line = "\(formatter.string(from: Date())) [\(level.rawValue.uppercased())] \(msg())"
+        let text = msg()
         queue.async {
+            let line = "\(formatter.string(from: Date())) [\(level.rawValue.uppercased())] \(text)"
             oslog.log(level: osLevel(level), "\(line, privacy: .public)")
-            if let data = (line + "\n").data(using: .utf8), let fh = fileHandle {
-                try? fh.write(contentsOf: data)
-            }
+            guard let data = (line + "\n").data(using: .utf8) else { return }
+            if fileHandle == nil { openIfNeeded() }
+            if bytesInFile + UInt64(data.count) > maxFileBytes { rotate() }
+            try? fileHandle?.write(contentsOf: data)
+            bytesInFile += UInt64(data.count)
             #if DEBUG
-            if let errData = (line + "\n").data(using: .utf8) {
-                FileHandle.standardError.write(errData)
-            }
+            FileHandle.standardError.write(data)
             #endif
         }
+    }
+
+    private static func openIfNeeded() {
+        guard fileHandle == nil else { return }
+        let path = Paths.logFile.path
+        if !FileManager.default.fileExists(atPath: path) {
+            FileManager.default.createFile(atPath: path, contents: nil)
+        }
+        fileHandle = try? FileHandle(forWritingTo: URL(fileURLWithPath: path))
+        _ = try? fileHandle?.seekToEnd()
+        bytesInFile = (try? fileHandle?.offsetInFile) ?? 0
+    }
+
+    /// 按大小轮转：SubNow.log → SubNow.log.1（只保留一份历史）
+    private static func rotate() {
+        try? fileHandle?.close()
+        fileHandle = nil
+        let current = Paths.logFile
+        let previous = current.appendingPathExtension("1")
+        try? FileManager.default.removeItem(at: previous)
+        try? FileManager.default.moveItem(at: current, to: previous)
+        openIfNeeded()
     }
 
     private static func osLevel(_ level: LogLevel) -> OSLogType {

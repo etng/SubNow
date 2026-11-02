@@ -165,6 +165,7 @@ int snwh_run(snwh_context_t * ctx, const char * wav_path, const char * language,
 
     ctx->progress_fn = progress_fn; ctx->progress_ud = progress_ud;
     ctx->abort_fn    = abort_fn;    ctx->abort_ud    = abort_ud;
+    ctx->abort_requested = 0;
 
     struct whisper_full_params p = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
     p.print_progress   = false;

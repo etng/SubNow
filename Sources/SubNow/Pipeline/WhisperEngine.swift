@@ -43,6 +43,7 @@ final class WhisperEngine {
              progress: @escaping (Int) -> Void,
              isCancelled: @escaping () -> Bool) throws -> (segments: [Segment], language: String) {
         guard let ctx else { throw WhisperError.load("引擎未初始化") }
+        guard !isCancelled() else { throw CancellationError() }
 
         final class Box {
             let progress: (Int) -> Void
@@ -78,7 +79,7 @@ final class WhisperEngine {
 
         switch rc {
         case 0: break
-        case -2: throw WhisperError.cancelled
+        case -2: throw CancellationError()
         default: throw WhisperError.run(String(cString: err))
         }
 

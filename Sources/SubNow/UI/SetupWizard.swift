@@ -7,7 +7,6 @@ final class SetupWizardController: NSWindowController, NSWindowDelegate {
     static let shared = SetupWizardController()
 
     private let stack = NSStackView()
-    private var migrated = false
     private var observerToken: UUID?
     private var lastRebuild = Date.distantPast
 
@@ -36,7 +35,6 @@ final class SetupWizardController: NSWindowController, NSWindowDelegate {
     required init?(coder: NSCoder) { fatalError("不支持") }
 
     func present() {
-        migrated = Migration.detect().needsMigration ? migrated : false
         rebuild()
         showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -78,18 +76,6 @@ final class SetupWizardController: NSWindowController, NSWindowDelegate {
         stack.addArrangedSubview(intro)
         stack.setCustomSpacing(14, after: intro)
 
-        // 历史守护迁移卡
-        let old = Migration.detect()
-        if old.needsMigration && !migrated {
-            stack.addArrangedSubview(card(
-                icon: "arrow.triangle.2.circlepath",
-                title: "检测到历史版本 POC 调研结果 守护",
-                detail: "\(old.summary)。历史版本与新版本同时跑会重复提醒，建议停用历史守护（不影响模型与已生成的字幕）。",
-                buttonTitle: "停用历史守护",
-                action: #selector(disableOldDaemon)
-            ))
-        }
-
         ComponentCenter.shared.refresh()
         ComponentCenter.shared.refreshOllamaAsync()
         for id in ComponentCenter.ComponentID.allCases {
@@ -98,11 +84,25 @@ final class SetupWizardController: NSWindowController, NSWindowDelegate {
 
         stack.setCustomSpacing(16, after: stack.arrangedSubviews.last!)
         let hint = NSTextField(wrappingLabelWithString: "全部必需组件就绪后，SubNow 才会开始提醒可生成字幕；"
-            + "此窗口可随时从菜单栏「设置…」重新打开。")
+            + "此窗口可随时从菜单栏「组件就绪检查…」重新打开。")
         hint.font = .systemFont(ofSize: 11)
         hint.textColor = .tertiaryLabelColor
         hint.preferredMaxLayoutWidth = 560
         stack.addArrangedSubview(hint)
+
+        // 首次引导的收尾动作：打勾后重启不再自动弹窗
+        let footer = NSStackView()
+        footer.orientation = .horizontal
+        footer.spacing = 10
+        let done = NSButton(title: "完成，开始使用", target: self, action: #selector(completeSetup))
+        done.bezelStyle = .rounded
+        done.isEnabled = ComponentCenter.shared.isBaseReady
+        footer.addArrangedSubview(done)
+        let later = NSButton(title: "稍后再说", target: self, action: #selector(closeWizard))
+        later.bezelStyle = .rounded
+        footer.addArrangedSubview(later)
+        stack.setCustomSpacing(12, after: hint)
+        stack.addArrangedSubview(footer)
     }
 
     private func componentRow(_ id: ComponentCenter.ComponentID) -> NSView {
@@ -272,11 +272,14 @@ final class SetupWizardController: NSWindowController, NSWindowDelegate {
         ComponentCenter.shared.cancelDownload(id)
     }
 
-    @objc private func disableOldDaemon() {
-        let log = Migration.migrateOldDaemon()
-        migrated = true
-        Log.info("迁移结果: \(log.joined(separator: "；"))")
-        rebuild()
+    @objc private func completeSetup() {
+        Config.shared.hasCompletedSetup = true
+        Log.info("首次引导完成，之后启动不再自动弹向导")
+        window?.close()
+    }
+
+    @objc private func closeWizard() {
+        window?.close()
     }
 }
 

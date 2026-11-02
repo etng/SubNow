@@ -101,7 +101,7 @@ enum MpvIPC {
         return Reply(error: error, data: obj["data"])
     }
 
-    /// 死 socket 清理（POC 调研结果规则）：连接拒绝且 mtime 超过 60s → unlink。
+    /// 死 socket 清理：连接拒绝且 mtime 超过 60s → unlink。
     /// 仅清理我们候选列表里的路径，绝不碰陌生 socket。
     static func cleanupDeadSocketIfNeeded(path: String) {
         let known = Set(Paths.socketCandidates)
@@ -136,7 +136,7 @@ enum MpvIPC {
         }
     }
 
-    /// 是否正在播放（有 path 即视为活跃，暂停也算——POC 调研结果语义）
+    /// 是否正在播放（有 path 即视为活跃，暂停也算）
     static func isAlive(socketPath: String) -> Bool {
         currentPath(socketPath: socketPath) != nil
     }
@@ -175,11 +175,12 @@ enum MpvIPC {
         currentPath(socketPath: socketPath) == videoPath
     }
 
-    /// 判断已加载字幕轨里有没有中文（type=sub 且 lang/title 指向中文）
+    /// 判断"当前已启用"的字幕轨里有没有中文（type=sub、selected、lang/title 指向中文）。
+    /// 仅存在但未选中的中文轨不算——用户此刻屏幕上并没有中文字幕。
     static func hasChineseSubtitleTrack(tracks: [Track]) -> Bool {
         let zhLangs: Set<String> = ["zh", "chi", "zho", "zh-cn", "zh-tw", "zh-hans", "zh-hant", "yue"]
         return tracks.contains { track in
-            guard track.type == "sub" else { return false }
+            guard track.type == "sub", track.selected else { return false }
             if let lang = track.lang?.lowercased(), zhLangs.contains(lang) { return true }
             if let title = track.title {
                 if zhLangs.contains(title.lowercased()) { return true }

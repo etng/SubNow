@@ -1,0 +1,94 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      BUILD_NUMBER: ${{ github.run_number }}
+      TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 校验版本与运行环境
+        run: |
+          set -euo pipefail
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::VERSION 不是合法 SemVer: $VERSION"
+            exit 1
+          fi
+          if [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" != "v$VERSION" ]]; then
+            echo "::error::tag $GITHUB_REF_NAME 与 VERSION v$VERSION 不一致"
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          uname -m
+          swift --version
+          xcodebuild -version
+
+      - name: 测试
+        run: bash scripts/test.sh
+
+      - name: 构建 ad-hoc DMG
+        run: bash scripts/make_dmg.sh
+
+      - name: 生成 Homebrew Cask
+        run: bash scripts/make_cask.sh "$VERSION" "dist/SubNow-$VERSION.dmg" "$GITHUB_REPOSITORY" dist/subnow.rb
+
+      - name: 发布 GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          ASSETS=(
+            "dist/SubNow-$VERSION.dmg"
+            "dist/SubNow-$VERSION.dmg.sha256"
+            "dist/subnow.rb"
+          )
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            gh release upload "v$VERSION" "${ASSETS[@]}" --clobber
+          else
+            gh release create "v$VERSION" "${ASSETS[@]}" \
+              --title "SubNow $VERSION" --generate-notes
+          fi
+
+      - name: 未配置 tap token 提示
+        if: env.TAP_TOKEN == ''
+        run: echo "::warning::未配置 HOMEBREW_TAP_TOKEN，已跳过 etng/homebrew-taps 更新"
+
+      - name: 更新 Homebrew Tap
+        if: env.TAP_TOKEN != ''
+        run: |
+          set -euo pipefail
+          TAP_REPO="etng/homebrew-taps"
+          git clone --depth 1 "https://github.com/${TAP_REPO}.git" tap
+          mkdir -p tap/Casks
+          cp dist/subnow.rb tap/Casks/subnow.rb
+          bash scripts/update_tap_readme.sh tap "$GITHUB_REPOSITORY"
+          git -C tap config user.name "github-actions[bot]"
+          git -C tap config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C tap add Casks/subnow.rb README.md
+          if git -C tap diff --cached --quiet; then
+            echo "tap 无变化"
+            exit 0
+          fi
+          git -C tap commit -m "subnow ${VERSION}"
+          BRANCH="$(git -C tap symbolic-ref --quiet --short HEAD || echo main)"
+          git -C tap push "https://x-access-token:${TAP_TOKEN}@github.com/${TAP_REPO}.git" "HEAD:${BRANCH}"

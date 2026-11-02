@@ -15,16 +15,20 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     // 缓存需要在刷新间保持的控件
     private var ollamaModels: [String] = []
+    private var ollamaPulls: [String: Task<Void, Never>] = [:]
+    private var ollamaPullMessage = ""
     private weak var pollValueLabel: NSTextField?
+    private weak var ollamaPullLabel: NSTextField?
 
     init() {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 780, height: 580),
-            styleMask: [.titled, .closable, .miniaturizable],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "SubNow 设置"
+        window.minSize = NSSize(width: 720, height: 480)
         window.isReleasedWhenClosed = false
         super.init(window: window)
         window.delegate = self
@@ -129,7 +133,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             contentHost.leadingAnchor.constraint(equalTo: effect.trailingAnchor, constant: 28),
             contentHost.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -28),
             contentHost.topAnchor.constraint(equalTo: container.topAnchor, constant: 26),
-            contentHost.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -20),
+            contentHost.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -20),
         ])
         updateSidebarSelection()
         rebuildCurrentPage()
@@ -165,13 +169,33 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let builders: [() -> NSView] = [playersPage, enginePage, translationPage, behaviorPage, maintenancePage]
         let idx = max(0, min(selectedTabIndex, builders.count - 1))
         let page = builders[idx]()
-        contentHost.addSubview(page)
+
+        // 页面放进滚动容器：窗口可缩放，内容超高时不会被裁切
+        let scroll = NSScrollView()
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.drawsBackground = false
+        scroll.borderType = .noBorder
+
+        let document = NSView()
+        document.translatesAutoresizingMaskIntoConstraints = false
         page.translatesAutoresizingMaskIntoConstraints = false
+        document.addSubview(page)
+        scroll.documentView = document
+        contentHost.addSubview(scroll)
+
         NSLayoutConstraint.activate([
-            page.topAnchor.constraint(equalTo: contentHost.topAnchor),
-            page.leadingAnchor.constraint(equalTo: contentHost.leadingAnchor),
-            page.trailingAnchor.constraint(equalTo: contentHost.trailingAnchor),
-            page.bottomAnchor.constraint(lessThanOrEqualTo: contentHost.bottomAnchor),
+            scroll.topAnchor.constraint(equalTo: contentHost.topAnchor),
+            scroll.leadingAnchor.constraint(equalTo: contentHost.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: contentHost.trailingAnchor),
+            scroll.bottomAnchor.constraint(equalTo: contentHost.bottomAnchor),
+
+            page.topAnchor.constraint(equalTo: document.topAnchor),
+            page.leadingAnchor.constraint(equalTo: document.leadingAnchor),
+            page.trailingAnchor.constraint(equalTo: document.trailingAnchor),
+            page.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -16),
+            document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
         ])
     }
 
@@ -333,7 +357,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         sockField.target = self
         sockField.action = #selector(socketChanged(_:))
         stack.addArrangedSubview(row("自定义连接路径", sockField,
-                                     hint: "默认候选：/tmp/subnow-mpv.sock 与POC 调研结果 /tmp/poc-mpv.sock（自动兼容）。"))
+                                     hint: "留空使用默认路径 /tmp/subnow-mpv.sock；也可以填写自己的路径。"))
 
         stack.addArrangedSubview(section("IINA 联动（字幕自动挂载）"))
         stack.addArrangedSubview(note(
@@ -360,10 +384,19 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func ipcStateDescription() -> String {
-        let candidates = [Config.shared.customSocketPath].filter { !$0.isEmpty } + Paths.socketCandidates
-        let alive = candidates.filter { MpvIPC.isAlive(socketPath: $0) }
-        if alive.isEmpty { return "未检测到可用的播放器连接" }
-        return "连接 \(alive.joined(separator: ", "))"
+        guard let status = (NSApp.delegate as? AppDelegate)?.ipcStatus else {
+            return "尚未轮询（等待播放器监控完成首轮）"
+        }
+        switch status {
+        case .noPlayer:
+            return "未检测到正在运行的 IINA 或 mpv"
+        case .connected(let socket):
+            return "已连接（\(socket)）"
+        case .notConfigured(let player):
+            return "\(player) 正在运行，尚未开启联动"
+        case .failed(let socket, let reason):
+            return "连接失败（\(socket)）：\(reason)"
+        }
     }
 
     // MARK: - ② 字幕引擎
@@ -444,14 +477,36 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         fillModelPopup(draftPopup, selected: cfg.ollamaDraftModel)
         draftPopup.target = self
         draftPopup.action = #selector(draftModelPicked(_:))
-        stack.addArrangedSubview(row("草稿翻译模型", draftPopup, hint: "用于粗稿阶段；qwen2.5:7b 起步即可。"))
+        let draftPull = NSButton(title: ollamaPulls[cfg.ollamaDraftModel] != nil ? "取消" : "拉取",
+                                 target: self, action: #selector(pullOllamaDraft(_:)))
+        draftPull.bezelStyle = .rounded
+        draftPull.controlSize = .small
+        let draftRow = NSStackView(views: [draftPopup, draftPull])
+        draftRow.orientation = .horizontal
+        draftRow.spacing = 8
+        stack.addArrangedSubview(row("草稿翻译模型", draftRow, hint: "用于粗稿阶段；qwen2.5:7b 起步即可。"))
 
         let finalPopup = NSPopUpButton()
         finalPopup.frame = NSRect(x: 0, y: 0, width: 240, height: 24)
         fillModelPopup(finalPopup, selected: cfg.ollamaFinalModel)
         finalPopup.target = self
         finalPopup.action = #selector(finalModelPicked(_:))
-        stack.addArrangedSubview(row("精做翻译模型", finalPopup, hint: "用于精做阶段；越大越慢越准。"))
+        let finalPull = NSButton(title: ollamaPulls[cfg.ollamaFinalModel] != nil ? "取消" : "拉取",
+                                 target: self, action: #selector(pullOllamaFinal(_:)))
+        finalPull.bezelStyle = .rounded
+        finalPull.controlSize = .small
+        let finalRow = NSStackView(views: [finalPopup, finalPull])
+        finalRow.orientation = .horizontal
+        finalRow.spacing = 8
+        stack.addArrangedSubview(row("精做翻译模型", finalRow, hint: "用于精做阶段；越大越慢越准。"))
+
+        let pullLabel = NSTextField(labelWithString: ollamaPullMessage)
+        pullLabel.font = .systemFont(ofSize: 11)
+        pullLabel.textColor = .secondaryLabelColor
+        pullLabel.lineBreakMode = .byTruncatingMiddle
+        pullLabel.isHidden = ollamaPullMessage.isEmpty
+        self.ollamaPullLabel = pullLabel
+        stack.addArrangedSubview(pullLabel)
 
         // OpenAI 兼容区
         let apiURL = NSTextField(string: cfg.openAIBaseURL)
@@ -478,7 +533,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         if let fm = AppleFMAvailability.describe() {
             stack.addArrangedSubview(statusLineText(fm))
         } else {
-            stack.addArrangedSubview(note("Apple 系统模型：需要 macOS 26+ 并开启 Apple Intelligence。", width: 470))
+            stack.addArrangedSubview(note("Apple 系统模型：\(AppleFMAvailability.unavailableReason)。", width: 470))
         }
         return stack
     }
@@ -522,7 +577,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         lineLen.frame = NSRect(x: 0, y: 0, width: 60, height: 22)
         lineLen.target = self
         lineLen.action = #selector(lineLenChanged(_:))
-        stack.addArrangedSubview(row("每行译文字数", lineLen, hint: "POC 调研结果实测 20 最舒适；影响分行与翻译提示词。"))
+        stack.addArrangedSubview(row("每行译文字数", lineLen, hint: "实践经验 20 最舒适；影响分行与翻译提示词。"))
 
         let batch = NSTextField(string: String(cfg.batchSize))
         batch.frame = NSRect(x: 0, y: 0, width: 60, height: 22)
@@ -597,8 +652,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         buttons.spacing = 8
         stack.addArrangedSubview(buttons)
 
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0-dev"
-        stack.addArrangedSubview(note("SubNow \(version) · whisper.cpp v1.9.5 内嵌", width: 470))
+        stack.addArrangedSubview(section("关于"))
+        stack.addArrangedSubview(note("\(BuildInfo.summary)\nwhisper.cpp v1.9.5 内嵌", width: 580))
         return stack
     }
 
@@ -623,11 +678,29 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc private func verifyIPC() {
-        let state = ipcStateDescription()
-        let alert = NSAlert()
-        alert.messageText = "连接状态"
-        alert.informativeText = state
-        alert.runModal()
+        let candidates = [Config.shared.customSocketPath].filter { !$0.isEmpty } + Paths.socketCandidates
+        let alertTitle = "连接测试"
+        Task { @MainActor in
+            let report = await Task.detached(priority: .userInitiated) { () -> String in
+                var lines: [String] = []
+                for sock in candidates {
+                    guard FileManager.default.fileExists(atPath: sock) else {
+                        lines.append("✗ \(sock)：不存在")
+                        continue
+                    }
+                    if let path = MpvIPC.currentPath(socketPath: sock) {
+                        lines.append("✓ \(sock)：连接成功，正在播放 \(path)")
+                    } else {
+                        lines.append("✗ \(sock)：连接文件存在但读取失败（播放器未就绪、无权限或进程已退出）")
+                    }
+                }
+                return lines.joined(separator: "\n")
+            }.value
+            let alert = NSAlert()
+            alert.messageText = alertTitle
+            alert.informativeText = report.isEmpty ? "没有可测试的连接路径。" : report
+            alert.runModal()
+        }
     }
 
     @objc private func copyMpvConf() {
@@ -686,6 +759,55 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     @objc private func finalModelPicked(_ sender: NSPopUpButton) {
         Config.shared.ollamaFinalModel = sender.titleOfSelectedItem ?? Config.shared.ollamaFinalModel
         ComponentCenter.shared.refreshOllamaAsync()
+    }
+
+    @objc private func pullOllamaDraft(_ sender: NSButton) {
+        pullOllama(Config.shared.ollamaDraftModel)
+    }
+
+    @objc private func pullOllamaFinal(_ sender: NSButton) {
+        pullOllama(Config.shared.ollamaFinalModel)
+    }
+
+    private func pullOllama(_ model: String) {
+        let name = model.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return }
+        if let running = ollamaPulls[name] {
+            running.cancel()
+            return
+        }
+        ollamaPullMessage = "准备拉取 \(name)…"
+        let task = Task { @MainActor in
+            defer {
+                ollamaPulls[name] = nil
+                if Task.isCancelled { ollamaPullMessage = "已取消拉取 \(name)" }
+                rebuildCurrentPage()
+            }
+            do {
+                let stream = try await OllamaManager.shared.pull(baseURL: Config.shared.ollamaURL, model: name)
+                for await event in stream {
+                    if Task.isCancelled { return }
+                    switch event {
+                    case .progress(let fraction, let status):
+                        ollamaPullMessage = fraction >= 0
+                            ? "\(status)（\(Int(fraction * 100))%）"
+                            : status
+                        ollamaPullLabel?.stringValue = ollamaPullMessage
+                        ollamaPullLabel?.isHidden = false
+                    case .done:
+                        ollamaPullMessage = "\(name) 拉取完成"
+                        ollamaModels = (try? await OllamaManager.shared.listModels(baseURL: Config.shared.ollamaURL)) ?? ollamaModels
+                        ComponentCenter.shared.refreshOllamaAsync()
+                    case .failed(let message):
+                        ollamaPullMessage = "\(name) 拉取失败：\(message)"
+                    }
+                }
+            } catch {
+                ollamaPullMessage = "\(name) 拉取失败：\(error.localizedDescription)"
+            }
+        }
+        ollamaPulls[name] = task
+        rebuildCurrentPage()
     }
 
     @objc private func openAIURLChanged(_ sender: NSTextField) {
@@ -762,39 +884,44 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func runSelfCheck() {
         Task { @MainActor in
-            var lines: [String] = []
-
-            // ① 组件
             ComponentCenter.shared.refresh()
             ComponentCenter.shared.refreshOllamaAsync()
             let center = ComponentCenter.shared
-            lines.append(center.isBaseReady ? "✓ 组件就绪（\(center.missingSummary.isEmpty ? "全部必需项齐备" : center.missingSummary)）"
-                                            : "✗ 未就绪：\(center.missingSummary)")
+            let componentLine = center.isBaseReady
+                ? "✓ 组件就绪（\(center.missingSummary.isEmpty ? "全部必需项齐备" : center.missingSummary)）"
+                : "✗ 未就绪：\(center.missingSummary)"
+            let ipcLine = "播放器联动：\(ipcStateDescription())"
+            let kind = Config.shared.translationKind
+            let draftModel = Config.shared.draftModelURL
+            let vadModel = Config.shared.vadModelURL
 
-            // ② 引擎冒烟：加载草稿模型跑 1 秒静音
-            do {
+            // 引擎冒烟会加载 GB 级模型并跑 Metal，必须离开主线程
+            let engineLine = await Task.detached(priority: .userInitiated) { () -> String in
                 let silent = FileManager.default.temporaryDirectory
                     .appendingPathComponent("subnow-check-\(UUID().uuidString).wav")
-                var pcm = Data(repeating: 0, count: 32000)
-                try pcm.write(to: silent)
-                let engine = try WhisperEngine(modelURL: Config.shared.draftModelURL, vadURL: Config.shared.vadModelURL)
-                let t0 = Date()
-                let result = try engine.run(wavURL: silent, language: "auto", progress: { _ in }, isCancelled: { false })
-                try? FileManager.default.removeItem(at: silent)
-                lines.append("✓ 引擎冒烟通过（Metal 转录 \(String(format: "%.2f", -t0.timeIntervalSinceNow))s，语言=\(result.language)，分段=\(result.segments.count)）")
-            } catch {
-                lines.append("✗ 引擎冒烟失败：\(error.localizedDescription)")
-            }
+                defer { try? FileManager.default.removeItem(at: silent) }
+                do {
+                    try Self.silentWavData(seconds: 1).write(to: silent)
+                    let engine = try WhisperEngine(modelURL: draftModel, vadURL: vadModel)
+                    let t0 = Date()
+                    let result = try engine.run(wavURL: silent, language: "auto",
+                                                progress: { _ in }, isCancelled: { false })
+                    return "✓ 引擎冒烟通过（Metal 转录 \(String(format: "%.2f", -t0.timeIntervalSinceNow))s，语言=\(result.language)，分段=\(result.segments.count)）"
+                } catch {
+                    return "✗ 引擎冒烟失败：\(error.localizedDescription)"
+                }
+            }.value
 
-            // ③ Ollama
-            if Config.shared.translationKind == .ollama {
+            var lines = [componentLine, engineLine]
+
+            // Ollama（URLSession 异步，不阻塞主线程）
+            if kind == .ollama {
                 let models = (try? await OllamaManager.shared.listModels(baseURL: Config.shared.ollamaURL)) ?? []
                 lines.append(models.isEmpty ? "✗ Ollama 不可达（\(Config.shared.ollamaURL)）"
                                             : "✓ Ollama 在线（\(models.count) 个模型）")
             }
 
-            // ④ IPC
-            lines.append("播放器联动：\(ipcStateDescription())")
+            lines.append(ipcLine)
 
             let alert = NSAlert()
             alert.messageText = "SubNow 自检"
@@ -802,5 +929,20 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             alert.alertStyle = lines.contains(where: { $0.hasPrefix("✗") }) ? .warning : .informational
             alert.runModal()
         }
+    }
+
+    /// 生成合法的 16kHz 单声道 PCM16 WAV（全静音），供引擎冒烟使用。
+    nonisolated private static func silentWavData(seconds: Double, sampleRate: Int = 16000) -> Data {
+        let frames = Int(seconds * Double(sampleRate))
+        var data = Data(capacity: 44 + frames * 2)
+        func str(_ s: String) { data.append(s.data(using: .ascii)!) }
+        func u32(_ v: UInt32) { var x = v.littleEndian; withUnsafeBytes(of: &x) { data.append(contentsOf: $0) } }
+        func u16(_ v: UInt16) { var x = v.littleEndian; withUnsafeBytes(of: &x) { data.append(contentsOf: $0) } }
+        str("RIFF"); u32(UInt32(36 + frames * 2)); str("WAVE")
+        str("fmt "); u32(16); u16(1); u16(1); u32(UInt32(sampleRate))
+        u32(UInt32(sampleRate * 2)); u16(2); u16(16)
+        str("data"); u32(UInt32(frames * 2))
+        data.append(Data(repeating: 0, count: frames * 2))
+        return data
     }
 }

@@ -1,7 +1,7 @@
 import AppKit
 
 /// 应用主菜单。LSUIElement 应用没有主菜单时，⌘Q/⌘W/Copy/Paste 全部失灵——
-/// 这是POC「快捷键无效」的根因，必须在启动时就挂上。
+/// 无主菜单会导致快捷键失效，必须在启动时就挂上。
 enum AppMenu {
     static func make() -> NSMenu {
         let main = NSMenu()
@@ -10,7 +10,8 @@ enum AppMenu {
         let appItem = NSMenuItem()
         main.addItem(appItem)
         let appMenu = NSMenu(title: "SubNow")
-        appMenu.addItem(withTitle: "关于 SubNow", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        let about = appMenu.addItem(withTitle: "关于 SubNow", action: #selector(AppDelegate.showAbout), keyEquivalent: "")
+        about.target = NSApp.delegate
         appMenu.addItem(.separator())
         let hide = appMenu.addItem(withTitle: "隐藏 SubNow", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         hide.keyEquivalentModifierMask = .command
