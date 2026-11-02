@@ -12,7 +12,6 @@ VERSION="$(tr -d '[:space:]' < VERSION)"
 BUILD_NUMBER="${BUILD_NUMBER:-${GITHUB_RUN_NUMBER:-$(git rev-list --count HEAD 2>/dev/null || date -u +%Y%m%d%H%M)}}"
 BUILD_TIME="${BUILD_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 GIT_COMMIT="${GIT_COMMIT:-$(git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)}"
-BUILD_DIR=".build/out/Products/Release"
 APP="dist/${APP_NAME}.app"
 
 if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -24,6 +23,8 @@ echo "▶ 版本 ${VERSION}（build ${BUILD_NUMBER}，${BUILD_TIME}，${GIT_COMM
 
 echo "▶ ① Release 构建（arm64）..."
 swift build -c release --arch arm64
+BUILD_DIR="$(swift build -c release --arch arm64 --show-bin-path | tail -1)"
+echo "▶ 产物目录: $BUILD_DIR"
 
 echo "▶ ② 生成图标..."
 swift scripts/make_icon.swift dist/icon-build
