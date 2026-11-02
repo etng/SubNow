@@ -20,14 +20,30 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         super.init()
         statusItem.button?.image = Self.menuBarImage()
         statusItem.button?.imagePosition = .imageLeading
+        statusItem.button?.imageScaling = .scaleProportionallyDown
         statusItem.button?.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        statusItem.isVisible = true
         menu.delegate = self
         menu.autoenablesItems = false
         statusItem.menu = menu
+        if statusItem.button == nil {
+            Log.error("菜单栏状态项按钮创建失败，图标不会显示")
+        }
     }
 
-    /// 定稿的「双字幕条」模板字形（scripts/make_icon.swift 生成）；缺失时退回系统符号
-    private static func menuBarImage() -> NSImage? {
+    /// 定稿的「双字幕条」模板字形（scripts/make_icon.swift 生成）。
+    /// 打包产物直接读 Resources；Debug 构建没有该资源，用程序化绘制兜底，
+    /// 绝不依赖可能不存在的 SF Symbol——否则状态项宽度为 0，图标彻底不可见。
+    private static func menuBarImage() -> NSImage {
+        if let img = bundledMenuBarImage() {
+            Log.info("菜单栏图标来源：menubar PNG")
+            return img
+        }
+        Log.warn("菜单栏 PNG 资源缺失，使用程序化字形")
+        return drawnMenuBarGlyph()
+    }
+
+    private static func bundledMenuBarImage() -> NSImage? {
         for name in ["menubar-36.png", "menubar-18.png"] {
             if let url = Bundle.main.url(forResource: name, withExtension: nil, subdirectory: nil),
                let img = NSImage(contentsOf: url) {
@@ -36,7 +52,22 @@ final class StatusBarController: NSObject, NSMenuDelegate {
                 return img
             }
         }
-        return NSImage(systemSymbolName: "caption.2", accessibilityDescription: "SubNow 马上有字幕")
+        return nil
+    }
+
+    /// 与 scripts/make_icon.swift 的 drawMenuBarGlyph 同构（24 设计空间 → 18pt）
+    private static func drawnMenuBarGlyph() -> NSImage {
+        let image = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { rect in
+            let s = rect.width / 24
+            NSColor.black.setFill()
+            NSBezierPath(roundedRect: NSRect(x: 3 * s, y: 8 * s, width: 18 * s, height: 5 * s),
+                         xRadius: 2.5 * s, yRadius: 2.5 * s).fill()
+            NSBezierPath(roundedRect: NSRect(x: 7 * s, y: 15.5 * s, width: 10 * s, height: 4 * s),
+                         xRadius: 2 * s, yRadius: 2 * s).fill()
+            return true
+        }
+        image.isTemplate = true
+        return image
     }
 
     func update(stateLine: String, playback: PlayerMonitor.PlaybackMenuInfo?, canGenerate: Bool,
@@ -50,9 +81,9 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         self.restoreCount = restoreCount
         self.ipcHint = ipcHint
 
-        // 运行中在图标旁显示百分比角标；空闲时收起
-        if let progress {
-            statusItem.button?.title = " \(Int((min(max(progress, 0), 1)) * 100))%"
+        // 运行中在图标旁显示百分比角标；空闲或排队（0%）时收起，避免挤占菜单栏
+        if let progress, progress > 0 {
+            statusItem.button?.title = "\(Int(min(progress, 1) * 100))%"
         } else {
             statusItem.button?.title = ""
         }

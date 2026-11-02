@@ -208,7 +208,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         signal(SIGTERM, SIG_IGN)
         let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
         source.setEventHandler { [weak self] in
-            self?.quit()
+            // 不能在 dispatch source 回调里直接 terminate：主队列不可重入，
+            // terminateLater 的嵌套 runloop 永远调度不到清理 Task，进程会卡死。
+            DispatchQueue.main.async { self?.quit() }
         }
         source.resume()
         sigtermSource = source
