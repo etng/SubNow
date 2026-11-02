@@ -13,8 +13,8 @@ final class SetupWizardController: NSWindowController, NSWindowDelegate {
 
     init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 620, height: 480),
-            styleMask: [.titled, .closable],
+            contentRect: NSRect(x: 0, y: 0, width: 620, height: 540),
+            styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
             defer: false
         )
@@ -45,23 +45,22 @@ final class SetupWizardController: NSWindowController, NSWindowDelegate {
     // MARK: - UI
 
     private func buildContent() -> NSView {
-        let scroll = NSScrollView()
-        scroll.hasVerticalScroller = true
-        scroll.drawsBackground = false
-
+        // 不用 NSScrollView：documentView 比 clip 矮时会被推到底部（flip 时机歧义）。
+        // 组件数量有限，直接用普通容器 + 窗口可调大小。
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 10
         stack.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
         stack.translatesAutoresizingMaskIntoConstraints = false
-        scroll.documentView = stack
 
+        let container = NSView()
+        container.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor, constant: 4),
-            stack.trailingAnchor.constraint(equalTo: scroll.contentView.trailingAnchor, constant: -4),
-            stack.widthAnchor.constraint(equalTo: scroll.widthAnchor, constant: -28),
+            stack.topAnchor.constraint(equalTo: container.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
         ])
-        return scroll
+        return container
     }
 
     private func rebuild() {
