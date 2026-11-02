@@ -7,9 +7,9 @@ import ServiceManagement
 final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     static let shared = SettingsWindowController()
 
-    private let segmented = NSSegmentedControl(labels: ["播放器", "字幕引擎", "翻译", "行为", "维护"],
-                                               trackingMode: .selectOne, target: nil, action: nil)
     private let contentHost = NSView()
+    private var selectedTabIndex = 0
+    private var sidebarButtons: [NSButton] = []
     private var observerToken: UUID?
     private var lastPageRebuild = Date.distantPast
 
@@ -19,7 +19,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 680, height: 560),
+            contentRect: NSRect(x: 0, y: 0, width: 780, height: 580),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
@@ -45,7 +45,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     func show() {
         ComponentCenter.shared.refresh()
         ComponentCenter.shared.refreshOllamaAsync()
-        segmented.selectedSegment = 0
+        selectedTabIndex = 0
+        updateSidebarSelection()
         rebuildCurrentPage()
         showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -53,43 +54,116 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     /// 调试用：直接切到指定分页
     func selectTab(_ index: Int) {
-        segmented.selectedSegment = max(0, min(index, segmented.segmentCount - 1))
+        selectedTabIndex = max(0, min(index, sidebarButtons.count - 1))
+        updateSidebarSelection()
         rebuildCurrentPage()
     }
 
     // MARK: - 骨架
 
     private func buildContent() -> NSView {
-        segmented.target = self
-        segmented.action = #selector(segmentChanged)
-        segmented.translatesAutoresizingMaskIntoConstraints = false
+        let effect = NSVisualEffectView()
+        effect.material = .sidebar
+        effect.blendingMode = .behindWindow
+        effect.state = .active
+        effect.translatesAutoresizingMaskIntoConstraints = false
+
+        let sidebarStack = NSStackView()
+        sidebarStack.orientation = .vertical
+        sidebarStack.alignment = .leading
+        sidebarStack.spacing = 4
+        sidebarStack.edgeInsets = NSEdgeInsets(top: 14, left: 10, bottom: 10, right: 10)
+        sidebarStack.translatesAutoresizingMaskIntoConstraints = false
+
+        let items: [(String, String)] = [
+            ("play.rectangle", "播放器"), ("cpu", "字幕引擎"), ("globe", "翻译"),
+            ("slider.horizontal.3", "行为"), ("wrench.and.screwdriver", "维护"),
+        ]
+        sidebarButtons = items.enumerated().map { idx, item in
+            let b = NSButton(title: item.1, target: self, action: #selector(sidebarClicked(_:)))
+            b.image = NSImage(systemSymbolName: item.0, accessibilityDescription: nil)
+            b.imagePosition = .imageLeading
+            b.isBordered = false
+            b.setButtonType(.momentaryPushIn)
+            b.tag = idx
+            b.wantsLayer = true
+            b.layer?.cornerRadius = 6
+            b.translatesAutoresizingMaskIntoConstraints = false
+            b.heightAnchor.constraint(equalToConstant: 30).isActive = true
+            return b
+        }
+        sidebarButtons.forEach { sidebarStack.addArrangedSubview($0) }
+        // 加入层级后才能激活跨视图宽度约束
+        for b in sidebarButtons {
+            b.widthAnchor.constraint(equalTo: sidebarStack.widthAnchor, constant: -20).isActive = true
+        }
+
         contentHost.translatesAutoresizingMaskIntoConstraints = false
 
-        let container = NSView()
-        container.addSubview(segmented)
-        container.addSubview(contentHost)
-        NSLayoutConstraint.activate([
-            segmented.topAnchor.constraint(equalTo: container.topAnchor, constant: 16),
-            segmented.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
-            contentHost.topAnchor.constraint(equalTo: segmented.bottomAnchor, constant: 16),
-            contentHost.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
-            contentHost.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
-            contentHost.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -16),
-        ])
+        let divider = NSView()
+        divider.wantsLayer = true
+        divider.layer?.backgroundColor = NSColor.separatorColor.cgColor
+        divider.translatesAutoresizingMaskIntoConstraints = false
 
+        let container = NSView()
+        container.addSubview(effect)
+        effect.addSubview(sidebarStack)
+        container.addSubview(divider)
+        container.addSubview(contentHost)
+
+        NSLayoutConstraint.activate([
+            effect.topAnchor.constraint(equalTo: container.topAnchor),
+            effect.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            effect.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            effect.widthAnchor.constraint(equalToConstant: 182),
+            sidebarStack.topAnchor.constraint(equalTo: effect.topAnchor),
+            sidebarStack.bottomAnchor.constraint(equalTo: effect.bottomAnchor),
+            sidebarStack.leadingAnchor.constraint(equalTo: effect.leadingAnchor),
+            sidebarStack.trailingAnchor.constraint(equalTo: effect.trailingAnchor),
+
+            divider.leadingAnchor.constraint(equalTo: effect.trailingAnchor),
+            divider.widthAnchor.constraint(equalToConstant: 1),
+            divider.topAnchor.constraint(equalTo: container.topAnchor),
+            divider.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+
+            contentHost.leadingAnchor.constraint(equalTo: effect.trailingAnchor, constant: 28),
+            contentHost.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -28),
+            contentHost.topAnchor.constraint(equalTo: container.topAnchor, constant: 26),
+            contentHost.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -20),
+        ])
+        updateSidebarSelection()
         rebuildCurrentPage()
         return container
     }
 
-    @objc private func segmentChanged() {
+    @objc private func sidebarClicked(_ sender: NSButton) {
+        selectedTabIndex = sender.tag
+        updateSidebarSelection()
         rebuildCurrentPage()
+    }
+
+    private func updateSidebarSelection() {
+        for (idx, b) in sidebarButtons.enumerated() {
+            let selected = idx == selectedTabIndex
+            b.layer?.backgroundColor = selected
+                ? NSColor.controlAccentColor.withAlphaComponent(0.16).cgColor
+                : NSColor.clear.cgColor
+            let style = NSMutableParagraphStyle()
+            style.alignment = .left
+            b.attributedTitle = NSAttributedString(string: b.title, attributes: [
+                .foregroundColor: selected ? NSColor.controlAccentColor : NSColor.labelColor,
+                .font: NSFont.systemFont(ofSize: 13, weight: selected ? .semibold : .regular),
+                .paragraphStyle: style,
+            ])
+            b.contentTintColor = selected ? .controlAccentColor : .secondaryLabelColor
+        }
     }
 
     private func rebuildCurrentPage() {
         // 每次重建当前页——保证组件状态/配置值总是最新（页面视图不缓存）
         contentHost.subviews.forEach { $0.removeFromSuperview() }
         let builders: [() -> NSView] = [playersPage, enginePage, translationPage, behaviorPage, maintenancePage]
-        let idx = max(0, min(segmented.selectedSegment, builders.count - 1))
+        let idx = max(0, min(selectedTabIndex, builders.count - 1))
         let page = builders[idx]()
         contentHost.addSubview(page)
         page.translatesAutoresizingMaskIntoConstraints = false
@@ -103,10 +177,19 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: - 通用构件
 
-    private func section(_ title: String) -> NSTextField {
+    private func section(_ title: String) -> NSView {
         let label = NSTextField(labelWithString: title)
-        label.font = .systemFont(ofSize: 14, weight: .semibold)
-        return label
+        label.font = .systemFont(ofSize: 15, weight: .semibold)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        let holder = NSView()
+        holder.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.topAnchor.constraint(equalTo: holder.topAnchor, constant: 14),
+            label.bottomAnchor.constraint(equalTo: holder.bottomAnchor),
+            label.leadingAnchor.constraint(equalTo: holder.leadingAnchor, constant: 2),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: holder.trailingAnchor),
+        ])
+        return holder
     }
 
     private func note(_ text: String, width: CGFloat = 600) -> NSTextField {
@@ -125,14 +208,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let pair = NSStackView(views: [label, control])
         pair.orientation = .horizontal
         pair.alignment = .centerY
-        pair.spacing = 10
+        pair.spacing = 14
 
         if let hint {
             let h = note(hint, width: 480)
             let v = NSStackView(views: [pair, h])
             v.orientation = .vertical
             v.alignment = .leading
-            v.spacing = 3
+            v.spacing = 5
             return v
         }
         return pair
@@ -222,7 +305,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 12
+        stack.spacing = 16
 
         stack.addArrangedSubview(section("检测"))
         let pollLabel = NSTextField(labelWithString: "\(Int(cfg.pollSeconds)) 秒")
@@ -235,7 +318,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         pollStack.orientation = .horizontal
         pollStack.spacing = 8
         stack.addArrangedSubview(row("检测间隔", pollStack))
-        stack.addArrangedSubview(note("检测越频繁反应越快，也越耗电；默认 3 秒已足够灵敏。", width: 560))
+        stack.addArrangedSubview(note("检测越频繁反应越快，也越耗电；默认 3 秒已足够灵敏。", width: 470))
 
         let minField = NSTextField(string: String(cfg.minFileMB))
         minField.frame = NSRect(x: 0, y: 0, width: 70, height: 22)
@@ -246,7 +329,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         let sockField = NSTextField(string: cfg.customSocketPath)
         sockField.placeholderString = "留空使用默认候选"
-        sockField.frame = NSRect(x: 0, y: 0, width: 300, height: 22)
+        sockField.frame = NSRect(x: 0, y: 0, width: 250, height: 22)
         sockField.target = self
         sockField.action = #selector(socketChanged(_:))
         stack.addArrangedSubview(row("自定义连接路径", sockField,
@@ -256,7 +339,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         stack.addArrangedSubview(note(
             "IINA 默认不允许外部程序联动。开启方法：IINA → ⌘, 设置 → 高级 → 勾选「启用高级设置」→ "
             + "「额外 mpv 选项」添加一项：名称 input-ipc-server，值 /tmp/subnow-mpv.sock → 完全退出 IINA 重开。\n"
-            + "未开启也能用（字幕生成在视频旁，重开自动加载；但不能自动挂载、判定精度略低）——当前状态： \(ipcStateDescription())。", width: 580))
+            + "未开启也能用（字幕生成在视频旁，重开自动加载；但不能自动挂载、判定精度略低）——当前状态： \(ipcStateDescription())。", width: 470))
 
         let verify = NSButton(title: "验证连接", target: self, action: #selector(verifyIPC))
         verify.bezelStyle = .rounded
@@ -267,7 +350,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let copyMpv = NSButton(title: "复制 mpv.conf 建议行", target: self, action: #selector(copyMpvConf))
         copyMpv.bezelStyle = .rounded
         copyMpv.controlSize = .small
-        stack.addArrangedSubview(note("命令行 mpv 需在 ~/.config/mpv/mpv.conf 中加入对应行：", width: 560))
+        stack.addArrangedSubview(note("命令行 mpv 需在 ~/.config/mpv/mpv.conf 中加入对应行：", width: 470))
         stack.addArrangedSubview(copyMpv)
 
         let spacer = NSView()
@@ -289,14 +372,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 12
+        stack.spacing = 16
 
         stack.addArrangedSubview(section("语音识别引擎"))
         stack.addArrangedSubview(statusLineText("whisper.cpp v1.9.5 · Metal 加速 · 内嵌于应用（无需安装）"))
 
         stack.addArrangedSubview(section("模型（自动下载，支持国内镜像）"))
         let dirField = NSTextField(string: Config.shared.modelsDir.path)
-        dirField.frame = NSRect(x: 0, y: 0, width: 380, height: 22)
+        dirField.frame = NSRect(x: 0, y: 0, width: 300, height: 22)
         dirField.target = self
         dirField.action = #selector(modelsDirChanged(_:))
         stack.addArrangedSubview(row("模型目录", dirField))
@@ -304,7 +387,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         stack.addArrangedSubview(componentRow(.draftModel, downloadable: true))
         stack.addArrangedSubview(componentRow(.vadModel, downloadable: true))
         stack.addArrangedSubview(componentRow(.finalModel, downloadable: true))
-        stack.addArrangedSubview(note("草稿模型 + VAD 为必需；精做模型可选（缺失时自动跳过精做阶段）。", width: 560))
+        stack.addArrangedSubview(note("草稿模型 + VAD 为必需；精做模型可选（缺失时自动跳过精做阶段）。", width: 470))
 
         stack.addArrangedSubview(section("音频提取"))
         stack.addArrangedSubview(componentRow(.ffmpeg, downloadable: false))
@@ -332,7 +415,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 12
+        stack.spacing = 16
         let cfg = Config.shared
 
         stack.addArrangedSubview(section("翻译引擎"))
@@ -342,7 +425,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             TranslationKind.ollama: 0, .openAICompatible: 1, .appleFM: 2, .none: 3
         ][cfg.translationKind] ?? 0
         stack.addArrangedSubview(seg)
-        stack.addArrangedSubview(note("切换后立即保存；正在生成的任务不受影响，新任务生效。", width: 560))
+        stack.addArrangedSubview(note("切换后立即保存；正在生成的任务不受影响，新任务生效。", width: 470))
 
         // Ollama 区
         let urlField = NSTextField(string: cfg.ollamaURL)
@@ -373,21 +456,21 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         // OpenAI 兼容区
         let apiURL = NSTextField(string: cfg.openAIBaseURL)
         apiURL.placeholderString = "https://api.example.com/v1"
-        apiURL.frame = NSRect(x: 0, y: 0, width: 300, height: 22)
+        apiURL.frame = NSRect(x: 0, y: 0, width: 250, height: 22)
         apiURL.target = self
         apiURL.action = #selector(openAIURLChanged(_:))
         stack.addArrangedSubview(row("API Base URL", apiURL))
 
         let apiKey = NSSecureTextField(string: cfg.openAIAPIKey)
         apiKey.placeholderString = "sk-…"
-        apiKey.frame = NSRect(x: 0, y: 0, width: 300, height: 22)
+        apiKey.frame = NSRect(x: 0, y: 0, width: 250, height: 22)
         apiKey.target = self
         apiKey.action = #selector(openAIKeyChanged(_:))
         stack.addArrangedSubview(row("API Key", apiKey))
 
         let apiModel = NSTextField(string: cfg.openAIModel)
         apiModel.placeholderString = "模型名"
-        apiModel.frame = NSRect(x: 0, y: 0, width: 300, height: 22)
+        apiModel.frame = NSRect(x: 0, y: 0, width: 250, height: 22)
         apiModel.target = self
         apiModel.action = #selector(openAIModelChanged(_:))
         stack.addArrangedSubview(row("模型名", apiModel))
@@ -395,7 +478,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         if let fm = AppleFMAvailability.describe() {
             stack.addArrangedSubview(statusLineText(fm))
         } else {
-            stack.addArrangedSubview(note("Apple 系统模型：需要 macOS 26+ 并开启 Apple Intelligence。", width: 560))
+            stack.addArrangedSubview(note("Apple 系统模型：需要 macOS 26+ 并开启 Apple Intelligence。", width: 470))
         }
         return stack
     }
@@ -415,7 +498,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 12
+        stack.spacing = 16
 
         stack.addArrangedSubview(section("提醒"))
         stack.addArrangedSubview(check("检测到缺中文字幕时弹系统通知", cfg.autoAsk, #selector(autoAskChanged),
@@ -475,7 +558,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 12
+        stack.spacing = 16
 
         stack.addArrangedSubview(section("通用"))
         let launch = NSButton(checkboxWithTitle: "登录时自动启动 SubNow", target: self, action: #selector(launchAtLoginChanged))
@@ -484,7 +567,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         stack.addArrangedSubview(section("忽略记录"))
         stack.addArrangedSubview(note("被「忽略本次」、已生成或已判定有字幕的视频会被永久记住，不再重复提醒；"
-            + "字幕文件被删除后会自动重新判定。", width: 560))
+            + "字幕文件被删除后会自动重新判定。", width: 470))
         let bookView = NSTextField(wrappingLabelWithString: "读取中…")
         bookView.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
         bookView.preferredMaxLayoutWidth = 580
@@ -515,7 +598,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         stack.addArrangedSubview(buttons)
 
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0-dev"
-        stack.addArrangedSubview(note("SubNow \(version) · whisper.cpp v1.9.5 内嵌", width: 560))
+        stack.addArrangedSubview(note("SubNow \(version) · whisper.cpp v1.9.5 内嵌", width: 470))
         return stack
     }
 

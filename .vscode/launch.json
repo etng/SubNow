@@ -1,0 +1,44 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "name": "Debug snprobe",
+            "target": "snprobe",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug snprobe"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "name": "Release snprobe",
+            "target": "snprobe",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release snprobe"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "name": "Debug SubNow",
+            "target": "SubNow",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug SubNow"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "name": "Release SubNow",
+            "target": "SubNow",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release SubNow"
+        }
+    ]
+}
