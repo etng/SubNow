@@ -96,3 +96,7 @@ jobs:
           git -C tap commit -m "subnow ${VERSION}"
           BRANCH="$(git -C tap symbolic-ref --quiet --short HEAD || echo main)"
           git -C tap push origin "HEAD:${BRANCH}"
+
+      # gh-pages 页面中的版本字段由 data-site-version 标记，社交图不含版本号。
+      - name: 更新产品页版本
+        run: bash scripts/update_pages_version.sh "$VERSION"
