@@ -26,6 +26,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         } else if ProcessInfo.processInfo.environment["SUBNOW_SHOW_WIZARD"] == "1" {
             SetupWizardController.shared.present()
+        } else if ProcessInfo.processInfo.environment["SUBNOW_SHOW_HISTORY"] == "1" {
+            HistoryWindowController.shared.show()
         }
 
         ComponentCenter.shared.refresh()
@@ -36,16 +38,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 通知与探测接线
         Notify.shared.actionHandler = { [weak self] in self?.handleNotifyAction($0) }
-        Notify.shared.requestAuthorization()
-        advisor.onOffer = { offer in
-            Notify.shared.postOffer(videoPath: offer.videoPath, player: offer.player)
+        Notify.shared.onAuthorizationChanged = { [weak self] in
+            self?.updateStatusBarState()
+            SettingsWindowController.shared.externalStateChanged()
         }
-        advisor.onNotReady = { path, reason in
+        Notify.shared.requestAuthorization()
+        advisor.onOffer = { [weak self] offer in
+            Notify.shared.postOffer(videoPath: offer.videoPath, player: offer.player)
+            self?.showPlayerNotice("缺少中文字幕 · 点菜单栏 SubNow 图标生成",
+                                   videoPath: offer.videoPath, socketPath: offer.socketPath)
+        }
+        advisor.onNotReady = { [weak self] path, reason, socketPath in
             Notify.shared.postNotReady(videoPath: path, reason: reason)
+            self?.showPlayerNotice("缺少中文字幕 · SubNow 组件未就绪（点菜单栏查看）",
+                                   videoPath: path, socketPath: socketPath)
         }
         monitor.onPlayback = { [weak self] snapshot in
             guard let self else { return }
             self.latestSnapshot = snapshot
+            // 同卷播放时暂停音频提取，避免与播放器抢 SMB/磁盘 I/O
+            PlaybackGate.shared.update(activities: snapshot.playbacks.map {
+                PlaybackActivity(path: $0.videoPath, playing: $0.isPlaying)
+            })
             self.updateStatusBarState()
             Task { await self.advisor.handle(snapshot) }
         }
@@ -63,18 +77,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let statusBar else { return }
         let center = ComponentCenter.shared
         let manager = JobManager.shared
-        let activeJob = manager.jobs.first { ![JobManager.Stage.done, .failed, .cancelled].contains($0.stage) }
-
         let jobs = manager.menuJobs
         let restoreCount = pendingRestore.count
         let ipcHint = latestSnapshot?.ipcStatus.hint
+        let playing = latestSnapshot?.playbacks.first
 
-        // 任务进行中：状态行显示进度 + 菜单栏百分比角标
-        if let job = activeJob {
-            statusBar.update(stateLine: "\(job.stage.rawValue) \(Int(job.pct))% · \(job.detail)",
-                             playback: playbackInfo(from: latestSnapshot, canGenerate: false),
-                             canGenerate: false,
-                             jobs: jobs, progress: job.pct / 100,
+        // 当前播放的视频已有未完成任务（含暂停）→ 按钮无事可做；否则允许生成
+        let playingHasJob = playing.map { active in
+            manager.jobs.contains {
+                $0.videoPath == active.videoPath && !JobManager.isTerminal($0.stage)
+            }
+        } ?? false
+        let canGenerate = center.isBaseReady && playing != nil && !playingHasJob
+        let running = manager.runningJob
+        let willPreempt = canGenerate && running != nil && running?.videoPath != playing?.videoPath
+
+        // 任务进行中：状态行显示进度；播放区仍可用，新视频会抢占让位
+        if let job = running ?? manager.activeJob {
+            let stateLine: String
+            switch job.stage {
+            case .paused:
+                stateLine = "已暂停 · \(URL(fileURLWithPath: job.videoPath).lastPathComponent)"
+            case .queued:
+                stateLine = "排队中 · \(URL(fileURLWithPath: job.videoPath).lastPathComponent)"
+            default:
+                stateLine = "\(job.stage.rawValue) \(Int(job.pct))% · \(job.detail)"
+            }
+            statusBar.update(stateLine: stateLine,
+                             playback: playbackInfo(from: latestSnapshot),
+                             canGenerate: canGenerate,
+                             generateWillPreempt: willPreempt,
+                             jobs: jobs, progress: running.map { $0.pct / 100 },
                              restoreCount: restoreCount, ipcHint: ipcHint)
             return
         }
@@ -85,10 +118,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                              progress: nil, restoreCount: restoreCount, ipcHint: ipcHint)
             return
         }
-        if latestSnapshot?.playbacks.first != nil {
+        if playing != nil {
             statusBar.update(stateLine: "已就绪 · 马上有字幕",
-                             playback: playbackInfo(from: latestSnapshot, canGenerate: true),
-                             canGenerate: true, jobs: jobs,
+                             playback: playbackInfo(from: latestSnapshot),
+                             canGenerate: canGenerate, jobs: jobs,
                              progress: nil, restoreCount: restoreCount, ipcHint: ipcHint)
         } else {
             statusBar.update(stateLine: "已就绪 · 等待播放",
@@ -99,7 +132,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     var ipcStatus: PlayerMonitor.IPCStatus? { monitor.ipcStatus }
 
-    private func playbackInfo(from snapshot: PlayerMonitor.Snapshot?, canGenerate: Bool) -> PlayerMonitor.PlaybackMenuInfo? {
+    private func playbackInfo(from snapshot: PlayerMonitor.Snapshot?) -> PlayerMonitor.PlaybackMenuInfo? {
         guard let active = snapshot?.playbacks.first else { return nil }
         let name = URL(fileURLWithPath: active.videoPath).lastPathComponent
         let subState: String
@@ -113,6 +146,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // MARK: - 通知动作
+
+    /// 系统通知被关掉时仍要让用户看到提醒：直接画在播放器里（mpv/IINA IPC OSD）。
+    /// 优先用监控刚探测到的 socket，避免 IINA 自定义路径不在候选列表里时错过。
+    private func showPlayerNotice(_ text: String, videoPath: String, socketPath: String?) {
+        let custom = Config.shared.customSocketPath
+        DispatchQueue.global(qos: .userInitiated).async {
+            if let socketPath {
+                Mounter.notify(text, toVideo: videoPath, socketPath: socketPath)
+            } else {
+                Mounter.notify(text, forVideo: videoPath, customSocketPath: custom)
+            }
+        }
+    }
+
+    @objc func openNotificationSettings() {
+        Notify.shared.openSystemNotificationSettings()
+    }
 
     private func handleNotifyAction(_ action: Notify.Action) {
         switch action {
@@ -145,11 +195,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateStatusBarState()
     }
 
+    @objc func resumeJob(_ sender: NSMenuItem) {
+        guard let path = sender.representedObject as? String else { return }
+        JobManager.shared.resume(videoPath: path)
+        updateStatusBarState()
+    }
+
     @objc func restorePendingJobs() {
         guard ComponentCenter.shared.isBaseReady else { showSetupWizard(); return }
         let paths = pendingRestore
         pendingRestore = []
-        for path in paths { JobManager.shared.enqueue(videoPath: path) }
+        // 批量恢复不互相抢占，按顺序跑
+        for path in paths { JobManager.shared.enqueue(videoPath: path, preempt: false) }
         Log.info("恢复未完成任务：\(paths.count) 个")
         updateStatusBarState()
     }
@@ -171,7 +228,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func loadPendingRestore() {
         Task { @MainActor in
-            let paths = await PlayerBook.shared.queuedRestartPaths()
+            let all = await PlayerBook.shared.queuedRestartPaths()
+            // 持久化任务已直接载入队列，别再弹一次恢复提示
+            let paths = all.filter { !JobManager.shared.hasActiveJob(videoPath: $0) }
             self.pendingRestore = paths
             if !paths.isEmpty {
                 Log.info("发现 \(paths.count) 个未完成任务，等待用户从菜单恢复")
@@ -224,6 +283,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func showSettings() {
         SettingsWindowController.shared.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc func showHistory() {
+        HistoryWindowController.shared.show()
     }
 
     @objc func showSetupWizard() {

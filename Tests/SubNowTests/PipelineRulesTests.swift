@@ -41,17 +41,26 @@ final class PipelineRulesTests: XCTestCase {
 
     // MARK: - 时间轴 / 分行
 
-    func testFixTimingOverlapThenMinDuration() {
+    func testFixTimingNeverOverlaps() {
         let fixed = Segments.fixTiming([
             Segment(start: 0, end: 200, src: "a", zh: nil),
             Segment(start: 96, end: 336, src: "b", zh: nil),
             Segment(start: 1000, end: 1500, src: "c", zh: nil),
         ])
-        XCTAssertEqual(fixed[0].start, 0)
-        XCTAssertEqual(fixed[0].end, 800, "重叠修正后仍需满足 800ms 下限")
-        XCTAssertEqual(fixed[1].start, 96)
-        XCTAssertEqual(fixed[1].end, 896)
-        XCTAssertEqual(fixed[2].end, 1800, "短段同样补到 800ms")
+        XCTAssertEqual(fixed.map(\.start), [0, 96, 1000])
+        XCTAssertLessThanOrEqual(fixed[0].end, fixed[1].start, "宁可短一点也不重叠")
+        XCTAssertLessThanOrEqual(fixed[1].end, fixed[2].start)
+        XCTAssertEqual(fixed[2].end, 1800, "空间足够时仍补到 800ms")
+    }
+
+    func testFixTimingSortsAndRespectsMinimumWhenRoom() {
+        let fixed = Segments.fixTiming([
+            Segment(start: 1000, end: 1200, src: "b", zh: nil),
+            Segment(start: 0, end: 300, src: "a", zh: nil),
+        ])
+        XCTAssertEqual(fixed.map(\.src), ["a", "b"])
+        XCTAssertEqual(fixed[0].end, 800)
+        XCTAssertEqual(fixed[1].end, 1800)
     }
 
     func testFixTimingCapsAtTenSeconds() {
@@ -80,6 +89,58 @@ final class PipelineRulesTests: XCTestCase {
         XCTAssertEqual(Segments.wrapLine("abcdefghijklmno", width: 10, joiner: "\n"),
                        "abcdefghij\nklmno")
         XCTAssertEqual(Segments.wrapLine("short", width: 10, joiner: "\n"), "short")
+    }
+
+    func testMergeTinyFragmentIntoPrevious() {
+        let out = Segments.mergeFragments([
+            Segment(start: 0, end: 1000, src: "務めさせて", zh: nil),
+            Segment(start: 1020, end: 1060, src: "いただきたい", zh: nil),
+            Segment(start: 1080, end: 1600, src: "いただきます", zh: nil),
+        ], language: "ja")
+        XCTAssertEqual(out.count, 2)
+        XCTAssertEqual(out[0].src, "務めさせていただきたい")
+        XCTAssertEqual(out[0].end, 1060)
+    }
+
+    func testMergeTinyFirstIntoNext() {
+        let out = Segments.mergeFragments([
+            Segment(start: 0, end: 40, src: "え", zh: nil),
+            Segment(start: 60, end: 800, src: "そうですか", zh: nil),
+        ], language: "ja")
+        XCTAssertEqual(out.count, 1)
+        XCTAssertEqual(out[0].src, "えそうですか")
+        XCTAssertEqual(out[0].start, 0)
+        XCTAssertEqual(out[0].end, 800)
+    }
+
+    func testNoMergeWhenGapIsLarge() {
+        let out = Segments.mergeFragments([
+            Segment(start: 0, end: 100, src: "はい", zh: nil),
+            Segment(start: 1000, end: 1800, src: "そうですか", zh: nil),
+        ], language: "ja")
+        XCTAssertEqual(out.count, 2)
+    }
+
+    func testNoMergeForReadableShortLine() {
+        let out = Segments.mergeFragments([
+            Segment(start: 0, end: 500, src: "というのは", zh: nil),
+            Segment(start: 520, end: 1200, src: "そうですか", zh: nil),
+        ], language: "ja")
+        XCTAssertEqual(out.count, 2)
+    }
+
+    func testMergeFragmentsKeepsTranslations() {
+        let out = Segments.mergeFragments([
+            Segment(start: 0, end: 1000, src: "幸せが", zh: "幸福"),
+            Segment(start: 1020, end: 1060, src: "来る", zh: "会来"),
+        ], language: "ja")
+        XCTAssertEqual(out.count, 1)
+        XCTAssertEqual(out[0].zh, "幸福会来")
+    }
+
+    func testWrapLineKeepsBreakPunctuation() {
+        XCTAssertEqual(Segments.wrapLine("一二三四五。六七八九十", width: 6, joiner: "\n"),
+                       "一二三四五。\n六七八九十")
     }
 
     func testCleanTextStripsLeadingPunctuation() {
@@ -144,6 +205,16 @@ final class PipelineRulesTests: XCTestCase {
         let reopened = PlayerBook(fileURL: state)
         let paths = await reopened.queuedRestartPaths()
         XCTAssertEqual(paths, [video.path])
+    }
+
+    // MARK: - ffmpeg 进度解析
+
+    func testFfmpegProgressParsing() {
+        XCTAssertEqual(AudioExtractor.microseconds(from: "out_time_us=12345678"), 12_345_678)
+        XCTAssertEqual(AudioExtractor.microseconds(from: "out_time_ms=5000000"), 5_000_000)
+        XCTAssertNil(AudioExtractor.microseconds(from: "out_time_us=N/A"))
+        XCTAssertNil(AudioExtractor.microseconds(from: "progress=continue"))
+        XCTAssertNil(AudioExtractor.microseconds(from: "(no newline at end)"))
     }
 
     // MARK: - Provider 地址

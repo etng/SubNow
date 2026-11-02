@@ -34,6 +34,7 @@ final class Config {
         case draftModelFile = "draftModelFile"
         case finalModelFile = "finalModelFile"
         case vadModelFile = "vadModelFile"
+        case exportOutputs = "exportOutputs"
         case hasCompletedSetup = "hasCompletedSetup"
     }
 
@@ -58,6 +59,7 @@ final class Config {
             Key.draftModelFile.rawValue: "ggml-large-v3-turbo.bin",
             Key.finalModelFile.rawValue: "ggml-large-v3.bin",
             Key.vadModelFile.rawValue: "ggml-silero-v5.1.2.bin",
+            Key.exportOutputs.rawValue: OutputKind.defaults.map(\.rawValue),
             Key.hasCompletedSetup.rawValue: false,
         ])
     }
@@ -154,6 +156,22 @@ final class Config {
     var openAIModel: String {
         get { d.string(forKey: Key.openAIModel.rawValue) ?? "" }
         set { d.set(newValue, forKey: Key.openAIModel.rawValue) }
+    }
+
+    // MARK: - 输出
+
+    /// 复制到视频目录的成品；工作区始终保留全部种类。至少保留一种，避免成品完全不可见。
+    var exportKinds: Set<OutputKind> {
+        get {
+            let raw = d.stringArray(forKey: Key.exportOutputs.rawValue) ?? []
+            let set = Set(raw.compactMap(OutputKind.init(rawValue:)))
+            return set.isEmpty ? OutputKind.defaults : set
+        }
+        set {
+            let normalized = newValue.isEmpty ? OutputKind.defaults : newValue
+            d.set(OutputKind.allCases.filter { normalized.contains($0) }.map(\.rawValue),
+                  forKey: Key.exportOutputs.rawValue)
+        }
     }
 
     // MARK: - 引导

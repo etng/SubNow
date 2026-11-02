@@ -80,10 +80,20 @@ echo "✓ 打包完成: $APP"
 
 if [ "${1:-}" = "--install" ]; then
     echo "▶ ⑤ 安装到 /Applications..."
-    # 先确认没有运行中的实例（进程未退出就覆盖会出问题）
-    if pgrep -f "${APP_NAME}.app/Contents/MacOS/${APP_NAME}" >/dev/null 2>&1; then
-        echo "✗ 检测到 ${APP_NAME} 正在运行，请先从菜单栏退出后再安装"
-        exit 1
+    PATTERN="${APP_NAME}.app/Contents/MacOS/${APP_NAME}"
+    # 运行中的实例先优雅退出（应用带 SIGTERM 处理：收尾子进程、落盘任务检查点）
+    if pgrep -f "$PATTERN" >/dev/null 2>&1; then
+        echo "▷ 检测到运行中的 ${APP_NAME}，发送 TERM 等待收尾…"
+        pkill -TERM -f "$PATTERN" || true
+        for _ in $(seq 1 60); do
+            pgrep -f "$PATTERN" >/dev/null 2>&1 || break
+            sleep 0.25
+        done
+        if pgrep -f "$PATTERN" >/dev/null 2>&1; then
+            echo "✗ ${APP_NAME} 15 秒内未退出，取消安装（避免覆盖运行中的程序）"
+            exit 1
+        fi
+        echo "✓ 旧实例已退出"
     fi
     if [ -d "/Applications/${APP_NAME}.app" ]; then
         rm -rf "/Applications/${APP_NAME}.app"

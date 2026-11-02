@@ -65,6 +65,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     required init?(coder: NSCoder) { fatalError("不支持") }
 
+    /// 窗口外状态变化（如系统通知权限）触发的重建入口
+    func externalStateChanged() {
+        guard window?.isVisible == true else { return }
+        schedulePageRebuild()
+    }
+
     func show() {
         selectedTabIndex = 0
         updateSidebarSelection()
@@ -74,6 +80,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         // 窗口可见后再探测：观察者只在可见时重建，先前完成的结果会被丢掉
         ComponentCenter.shared.refresh()
         ComponentCenter.shared.refreshOllamaAsync()
+        Task { await Notify.shared.refreshAuthorization() }
     }
 
     /// 调试用：直接切到指定分页
@@ -101,7 +108,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         let items: [(String, String)] = [
             ("play.rectangle", "播放器"), ("cpu", "字幕引擎"), ("globe", "翻译"),
-            ("slider.horizontal.3", "行为"), ("wrench.and.screwdriver", "维护"),
+            ("slider.horizontal.3", "行为"), ("square.and.arrow.down", "输出"),
+            ("wrench.and.screwdriver", "维护"),
         ]
         sidebarButtons = items.enumerated().map { idx, item in
             let b = NSButton(title: item.1, target: self, action: #selector(sidebarClicked(_:)))
@@ -186,7 +194,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private func rebuildCurrentPage() {
         // 每次重建当前页——保证组件状态/配置值总是最新（页面视图不缓存）
         contentHost.subviews.forEach { $0.removeFromSuperview() }
-        let builders: [() -> NSView] = [playersPage, enginePage, translationPage, behaviorPage, maintenancePage]
+        let builders: [() -> NSView] = [playersPage, enginePage, translationPage, behaviorPage, outputPage, maintenancePage]
         let idx = max(0, min(selectedTabIndex, builders.count - 1))
         let page = builders[idx]()
 
@@ -584,6 +592,18 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         stack.addArrangedSubview(section("提醒"))
         stack.addArrangedSubview(check("检测到缺中文字幕时弹系统通知", cfg.autoAsk, #selector(autoAskChanged),
                                        hint: "关闭后不再主动弹通知，只在菜单栏保留「为这个视频生成字幕」入口。"))
+        if Notify.shared.isDenied {
+            let warn = NSStackView()
+            warn.orientation = .vertical
+            warn.alignment = .leading
+            warn.spacing = 6
+            warn.addArrangedSubview(note("系统通知权限已关闭。检测到缺中文字幕时，仍会在播放器内（mpv/IINA）显示提示，但不会弹系统横幅。", width: 520))
+            let open = NSButton(title: "打开系统通知设置", target: self, action: #selector(openNotificationSettings))
+            open.bezelStyle = .rounded
+            open.controlSize = .small
+            warn.addArrangedSubview(open)
+            stack.addArrangedSubview(warn)
+        }
         stack.addArrangedSubview(section("流水线"))
         stack.addArrangedSubview(check("粗稿完成后自动精做", cfg.autoFinal,
                                        #selector(autoFinalChanged),
@@ -633,7 +653,65 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         return box
     }
 
-    // MARK: - ⑤ 维护
+    // MARK: - ⑤ 输出
+
+    private func outputPage() -> NSView {
+        let cfg = Config.shared
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 16
+
+        stack.addArrangedSubview(section("复制到视频目录"))
+        stack.addArrangedSubview(note("工作区始终保留全部成品和材料；这里只决定哪些成品额外复制到视频旁。"
+            + "默认只复制“中文在上”的 ASS，播放器能直接识别。", width: 560))
+        for (idx, kind) in OutputKind.allCases.enumerated() {
+            let box = NSButton(checkboxWithTitle: kind.label, target: self, action: #selector(exportKindChanged(_:)))
+            box.tag = idx
+            box.state = cfg.exportKinds.contains(kind) ? .on : .off
+            box.font = .systemFont(ofSize: 13)
+            stack.addArrangedSubview(box)
+        }
+
+        stack.addArrangedSubview(section("工作区"))
+        let path = NSTextField(wrappingLabelWithString: Paths.workspaceDir.path)
+        path.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        path.textColor = .secondaryLabelColor
+        path.preferredMaxLayoutWidth = 560
+        stack.addArrangedSubview(path)
+        stack.addArrangedSubview(note("每部影片一个目录，保存 audio.wav、segments.json 与四份成品；"
+            + "历史记录窗口可以按影片查看、重新导出或清理。", width: 560))
+
+        let open = NSButton(title: "打开工作目录", target: self, action: #selector(openWorkspace))
+        open.bezelStyle = .rounded
+        open.controlSize = .small
+        stack.addArrangedSubview(open)
+        return stack
+    }
+
+    @objc private func exportKindChanged(_ sender: NSButton) {
+        let all = OutputKind.allCases
+        guard sender.tag >= 0, sender.tag < all.count else { return }
+        let kind = all[sender.tag]
+        var kinds = Config.shared.exportKinds
+        if sender.state == .on {
+            kinds.insert(kind)
+        } else {
+            kinds.remove(kind)
+        }
+        guard !kinds.isEmpty else {
+            sender.state = .on
+            NSSound.beep()
+            return
+        }
+        Config.shared.exportKinds = kinds
+    }
+
+    @objc private func openWorkspace() {
+        NSWorkspace.shared.open(Paths.workspaceDir)
+    }
+
+    // MARK: - ⑥ 维护
 
     private func maintenancePage() -> NSView {
         let stack = NSStackView()
@@ -854,6 +932,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func autoAskChanged(_ sender: NSButton) {
         Config.shared.autoAsk = sender.state == .on
+    }
+
+    @objc private func openNotificationSettings() {
+        Notify.shared.openSystemNotificationSettings()
     }
 
     @objc private func autoFinalChanged(_ sender: NSButton) {

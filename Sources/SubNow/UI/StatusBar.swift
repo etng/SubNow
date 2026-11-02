@@ -10,6 +10,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private var stateLine = "正在启动…"
     private var playbackInfo: PlayerMonitor.PlaybackMenuInfo?
     private var canGenerate = false
+    private var generateWillPreempt = false
     private var jobs: [JobManager.MenuJob] = []
     private var progress: Double?
     private var restoreCount = 0
@@ -71,11 +72,13 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     }
 
     func update(stateLine: String, playback: PlayerMonitor.PlaybackMenuInfo?, canGenerate: Bool,
+                generateWillPreempt: Bool = false,
                 jobs: [JobManager.MenuJob] = [], progress: Double? = nil,
                 restoreCount: Int = 0, ipcHint: String? = nil) {
         self.stateLine = stateLine
         self.playbackInfo = playback
         self.canGenerate = canGenerate
+        self.generateWillPreempt = generateWillPreempt
         self.jobs = jobs
         self.progress = progress
         self.restoreCount = restoreCount
@@ -107,7 +110,8 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             sub.isEnabled = false
             sub.indentationLevel = 1
             menu.addItem(sub)
-            let generate = NSMenuItem(title: "为这个视频生成字幕", action: #selector(AppDelegate.generateForCurrentPlayback), keyEquivalent: "")
+            let generateTitle = generateWillPreempt ? "为这个视频生成字幕（暂停当前任务）" : "为这个视频生成字幕"
+            let generate = NSMenuItem(title: generateTitle, action: #selector(AppDelegate.generateForCurrentPlayback), keyEquivalent: "")
             generate.target = delegate
             generate.isEnabled = canGenerate
             generate.indentationLevel = 1
@@ -121,22 +125,38 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             menu.addItem(.separator())
         }
 
+        // 系统通知被关：提醒仍在播放器内显示，但建议用户开启横幅
+        if Notify.shared.isDenied, let delegate {
+            addItem(menu, title: "系统通知已关闭 — 点击打开通知设置",
+                    target: delegate, action: #selector(AppDelegate.openNotificationSettings))
+            menu.addItem(.separator())
+        }
+
         // 任务区：运行中显示进度条 + 取消入口
         if !jobs.isEmpty {
             for job in jobs {
+                let name = URL(fileURLWithPath: job.videoPath).lastPathComponent
                 if job.active {
                     menu.addItem(progressItem(for: job))
-                    let name = URL(fileURLWithPath: job.videoPath).lastPathComponent
-                    let cancel = NSMenuItem(title: "取消「\(name)」",
-                                            action: #selector(AppDelegate.cancelJob(_:)), keyEquivalent: "")
-                    cancel.target = delegate
-                    cancel.representedObject = job.videoPath
-                    cancel.indentationLevel = 1
-                    menu.addItem(cancel)
+                    if job.paused {
+                        addItem(menu, title: "继续「\(name)」", target: delegate,
+                                action: #selector(AppDelegate.resumeJob(_:)),
+                                represented: job.videoPath, indentation: 1)
+                    }
+                    addItem(menu, title: "取消「\(name)」", target: delegate,
+                            action: #selector(AppDelegate.cancelJob(_:)),
+                            represented: job.videoPath, indentation: 1)
+                } else if job.failed {
+                    // 失败保留检查点：重试从上次完成的音频/转录继续，不重读 SMB
+                    addItem(menu, title: job.title, target: nil, action: nil)
+                    addItem(menu, title: "重试「\(name)」", target: delegate,
+                            action: #selector(AppDelegate.resumeJob(_:)),
+                            represented: job.videoPath, indentation: 1)
+                    addItem(menu, title: "取消「\(name)」", target: delegate,
+                            action: #selector(AppDelegate.cancelJob(_:)),
+                            represented: job.videoPath, indentation: 1)
                 } else {
-                    let item = NSMenuItem(title: job.title, action: nil, keyEquivalent: "")
-                    item.isEnabled = false
-                    menu.addItem(item)
+                    addItem(menu, title: job.title, target: nil, action: nil)
                 }
             }
             menu.addItem(.separator())
@@ -148,6 +168,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             menu.addItem(.separator())
         }
 
+        addItem(menu, title: "历史记录…", target: delegate, action: #selector(AppDelegate.showHistory))
         addItem(menu, title: "组件就绪检查…", target: delegate, action: #selector(AppDelegate.showSetupWizard))
         addItem(menu, title: "设置…", target: delegate, action: #selector(AppDelegate.showSettings))
         addItem(menu, title: "打开日志", target: delegate, action: #selector(AppDelegate.revealLog))
@@ -175,10 +196,13 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         return item
     }
 
-    private func addItem(_ menu: NSMenu, title: String, target: AnyObject?, action: Selector, key: String = "") {
+    private func addItem(_ menu: NSMenu, title: String, target: AnyObject?, action: Selector?,
+                         key: String = "", represented: Any? = nil, indentation: Int = 0) {
         let item = NSMenuItem(title: title, action: target != nil ? action : nil, keyEquivalent: key)
         item.target = target
         item.isEnabled = target != nil
+        item.representedObject = represented
+        item.indentationLevel = indentation
         item.keyEquivalentModifierMask = key.isEmpty ? [] : .command
         menu.addItem(item)
     }

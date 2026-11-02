@@ -5,6 +5,8 @@
 #include "ggml-cpp.h"
 #include "ggml-alloc.h"
 #include "ggml-backend.h"
+// 需要 ggml_cgraph 的 leafs/n_leafs 做预分配张量自查
+#include "ggml-impl.h"
 
 #ifdef WHISPER_USE_COREML
 #include "coreml/whisper-encoder.h"
@@ -556,6 +558,35 @@ static size_t whisper_sched_size(struct whisper_sched & allocr) {
     return size;
 }
 
+// 预分配张量（权重 / KV cache）只能留在拥有其 buffer 的 backend 上。
+// 如果该 backend 不在调度器里（典型：Metal 初始化失败、权重却已放进 Metal buffer），
+// ggml_backend_sched_split_graph 会直接 GGML_ABORT。先自查并返回失败，
+// 让上层能用 use_gpu=false 重建上下文。
+static bool whisper_sched_prealloc_supported(ggml_backend_sched_t sched, struct ggml_cgraph * graph) {
+    const int n_backends = ggml_backend_sched_get_n_backends(sched);
+    auto supported = [&](struct ggml_tensor * t) -> bool {
+        ggml_backend_buffer_t buffer = t->view_src ? t->view_src->buffer : t->buffer;
+        if (!buffer) return true;
+        ggml_backend_buffer_type_t buft = ggml_backend_buffer_get_type(buffer);
+        for (int i = 0; i < n_backends; ++i) {
+            ggml_backend_t backend = ggml_backend_sched_get_backend(sched, i);
+            if (ggml_backend_supports_buft(backend, buft) && ggml_backend_supports_op(backend, t)) {
+                return true;
+            }
+        }
+        WHISPER_LOG_ERROR("%s: pre-allocated tensor (%s, op=%s) cannot run on any scheduler backend (buffer=%s)\n",
+                          __func__, t->name, ggml_op_name(t->op), ggml_backend_buffer_name(buffer));
+        return false;
+    };
+    for (int i = 0; i < graph->n_leafs; ++i) {
+        if (!supported(graph->leafs[i])) return false;
+    }
+    for (int i = 0; i < graph->n_nodes; ++i) {
+        if (!supported(graph->nodes[i])) return false;
+    }
+    return true;
+}
+
 // measure the memory usage of a graph and prepare the allocr's internal data buffer
 static bool whisper_sched_graph_init(struct whisper_sched & allocr, std::vector<ggml_backend_t> backends, std::function<struct ggml_cgraph *()> && get_graph) {
     auto & sched = allocr.sched;
@@ -565,9 +596,15 @@ static bool whisper_sched_graph_init(struct whisper_sched & allocr, std::vector<
 
     meta.resize(ggml_tensor_overhead()*WHISPER_MAX_NODES + ggml_graph_overhead());
 
+    struct ggml_cgraph * graph = get_graph();
+    if (!whisper_sched_prealloc_supported(sched, graph)) {
+        WHISPER_LOG_ERROR("%s: incompatible pre-allocated tensors, giving up this backend set\n", __func__);
+        return false;
+    }
+
     // since there are dependencies between the different graphs,
     // we need to allocate them instead of only reserving to get the correct compute buffer size
-    if (!ggml_backend_sched_alloc_graph(sched, get_graph())) {
+    if (!ggml_backend_sched_alloc_graph(sched, graph)) {
         // failed to allocate the compute buffer
         WHISPER_LOG_ERROR("%s: failed to allocate the compute buffer\n", __func__);
         return false;
@@ -1338,13 +1375,27 @@ static ggml_backend_t whisper_backend_init_gpu(const whisper_context_params & pa
     return result;
 }
 
-static std::vector<ggml_backend_t> whisper_backend_init(const whisper_context_params & params) {
+// gpu_failed：GPU 设备存在但初始化失败。此时模型权重已经按 use_gpu 放进了 GPU buffer，
+// 而实际计算只能落回 CPU，调度器构图会 ggml_abort。让初始化失败（而不是 abort），
+// 上层可以用 use_gpu=false 重建上下文。
+static std::vector<ggml_backend_t> whisper_backend_init(const whisper_context_params & params, bool * gpu_failed = nullptr) {
     std::vector<ggml_backend_t> result;
+
+    if (gpu_failed) *gpu_failed = false;
 
     ggml_backend_t backend_gpu = whisper_backend_init_gpu(params);
 
     if (backend_gpu) {
         result.push_back(backend_gpu);
+    } else if (params.use_gpu) {
+        // 只有在确实找到 GPU 设备、但 dev_init 失败时才算降级失败
+        for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+            enum ggml_backend_dev_type type = ggml_backend_dev_type(ggml_backend_dev_get(i));
+            if (type == GGML_BACKEND_DEVICE_TYPE_GPU || type == GGML_BACKEND_DEVICE_TYPE_IGPU) {
+                if (gpu_failed) *gpu_failed = true;
+                break;
+            }
+        }
     }
 
     // ACCEL backends
@@ -3454,7 +3505,13 @@ static std::string whisper_openvino_get_path_cache(std::string path_bin) {
 struct whisper_state * whisper_init_state(whisper_context * ctx) {
     whisper_state * state = new whisper_state;
 
-    state->backends = whisper_backend_init(ctx->params);
+    bool gpu_failed = false;
+    state->backends = whisper_backend_init(ctx->params, &gpu_failed);
+    if (gpu_failed) {
+        WHISPER_LOG_ERROR("%s: GPU backend init failed, aborting state init so caller can retry on CPU\n", __func__);
+        whisper_free_state(state);
+        return nullptr;
+    }
     if (state->backends.empty()) {
         WHISPER_LOG_ERROR("%s: whisper_backend_init() failed\n", __func__);
         whisper_free_state(state);

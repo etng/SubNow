@@ -31,11 +31,18 @@ int snwh_run(snwh_context_t *ctx,
              char *err_buf, int err_len);
 
 int          snwh_segment_count(snwh_context_t *ctx);
-int64_t      snwh_segment_t0(snwh_context_t *ctx, int i);   // 毫秒
+int64_t      snwh_segment_t0(snwh_context_t *ctx, int i);   // 毫秒（whisper 的厘秒已在桥内换算）
 int64_t      snwh_segment_t1(snwh_context_t *ctx, int i);   // 毫秒
 const char * snwh_segment_text(snwh_context_t *ctx, int i);
 // 本次识别出的语言（ISO 代码）；自动检测失败时返回 "auto"。
 const char * snwh_detected_language(snwh_context_t *ctx);
+
+// 实际使用的计算后端：1 = GPU(Metal)，0 = CPU。
+int snwh_uses_gpu(snwh_context_t *ctx);
+// 本次转录的音频总时长（毫秒），用于校验时间轴是否完整。
+int64_t snwh_audio_ms(snwh_context_t *ctx);
+// 本次是否从 GPU 自动降级到了 CPU（1 = 发生过降级，用于日志与后续排障）。
+int snwh_gpu_fallback(snwh_context_t *ctx);
 
 #ifdef __cplusplus
 }

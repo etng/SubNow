@@ -17,10 +17,19 @@ enum Mounter {
     @discardableResult
     static func mount(subFile: URL, toVideo videoPath: String, title: String,
                       customSocketPath: String = "") -> Bool {
-        guard let socketPath = resolveSocket(for: videoPath, customSocketPath: customSocketPath) else { return false }
+        guard let socketPath = resolveSocket(for: videoPath, customSocketPath: customSocketPath) else {
+            Log.warn("未找到正在播放的视频窗口，跳过挂载：\(videoPath)")
+            return false
+        }
+        // 续跑/复跑时不重复挂同名字幕轨（mpv 的 sub-add 不会去重）
+        if MpvIPC.trackList(socketPath: socketPath)?.contains(where: { $0.type == "sub" && $0.title == title }) == true {
+            return true
+        }
         let ok = MpvIPC.subAdd(subFile.path, title: title, lang: "chi", socketPath: socketPath)
         if ok {
             Log.info("已挂载字幕轨「\(title)」→ \(videoPath)")
+        } else {
+            Log.warn("挂载字幕轨失败「\(title)」→ \(videoPath)")
         }
         return ok
     }
@@ -34,7 +43,17 @@ enum Mounter {
 
     static func notify(_ text: String, forVideo videoPath: String, customSocketPath: String = "") {
         guard let socketPath = resolveSocket(for: videoPath, customSocketPath: customSocketPath) else { return }
-        MpvIPC.showText(text, socketPath: socketPath)
+        notify(text, toVideo: videoPath, socketPath: socketPath)
+    }
+
+    /// 已知 socket 时直接发送（仍校验它当前播的确实是这个视频）
+    static func notify(_ text: String, toVideo videoPath: String, socketPath: String) {
+        guard MpvIPC.isPlaying(videoPath, socketPath: socketPath) else { return }
+        if MpvIPC.showText(text, socketPath: socketPath) {
+            Log.info("播放器提示已发送：\(text)")
+        } else {
+            Log.warn("播放器提示发送失败：\(text)")
+        }
     }
 }
 

@@ -15,12 +15,18 @@ final class Notify: NSObject, UNUserNotificationCenterDelegate {
 
     var actionHandler: ((Action) -> Void)?
 
+    /// 系统通知被用户关闭时置位：界面据此提示「改用播放器内 OSD / 去设置开启」。
+    private(set) var isDenied = false
+    var onAuthorizationChanged: (() -> Void)?
+
     private static let categoryOffer = "SUBNOW_OFFER"
     private static let categoryNotReady = "SUBNOW_NOT_READY"
 
-    /// UNUserNotificationCenter 只在真 .app 里可用；裸二进制（swift run 调试）优雅降级
+    /// UNUserNotificationCenter 只在真 .app 里可用；裸二进制（swift run）与
+    /// 单测进程（xctest）没有 app bundle proxy，直接调用会崩溃，这里统一降级。
     private var center: UNUserNotificationCenter? {
-        guard Bundle.main.bundleIdentifier != nil else { return nil }
+        guard Bundle.main.bundleURL.pathExtension == "app",
+              Bundle.main.bundleIdentifier != nil else { return nil }
         return UNUserNotificationCenter.current()
     }
 
@@ -40,8 +46,32 @@ final class Notify: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func requestAuthorization() {
-        center?.requestAuthorization(options: [.alert, .sound]) { granted, error in
+        guard let center else { return }
+        center.requestAuthorization(options: [.alert, .sound]) { [weak self] granted, error in
             Log.info("通知授权: granted=\(granted) error=\(error.map(String.init(describing:)) ?? "nil")")
+            Task { @MainActor in await self?.refreshAuthorization() }
+        }
+    }
+
+    /// 读取当前授权状态（用户可能在我们运行期间到系统设置里改过）
+    func refreshAuthorization() async {
+        guard let center else { return }
+        let settings = await center.notificationSettings()
+        let denied = settings.authorizationStatus == .denied
+        guard denied != isDenied else { return }
+        isDenied = denied
+        onAuthorizationChanged?()
+    }
+
+    /// 打开系统设置的「通知」面板（深链失败则退回通用通知列表）
+    func openSystemNotificationSettings() {
+        let id = Bundle.main.bundleIdentifier ?? ""
+        let candidates = [
+            "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=\(id)",
+            "x-apple.systempreferences:com.apple.preference.notifications",
+        ]
+        for raw in candidates {
+            if let url = URL(string: raw), NSWorkspace.shared.open(url) { return }
         }
     }
 

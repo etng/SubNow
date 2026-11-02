@@ -7,20 +7,34 @@ final class WhisperEngine {
     private var ctx: OpaquePointer?
     let modelURL: URL
 
+    /// Metal 设备由 ggml 全局持有，加载/销毁交错会踩到同一套 residency/kernel 状态。
+    /// 草稿与精做可能前后脚换模型，这里串行化生命周期。
+    private static let lifecycleLock = NSLock()
+
     init(modelURL: URL, vadURL: URL?) throws {
         self.modelURL = modelURL
         var err = [CChar](repeating: 0, count: 1024)
         let vadPath = vadURL?.path
+        Self.lifecycleLock.lock()
+        defer { Self.lifecycleLock.unlock() }
         ctx = modelURL.path.withCString { modelPath in
             vadPath?.withCString { vad in snwh_load(modelPath, vad, &err, 1024) }
                 ?? snwh_load(modelPath, nil, &err, 1024)
         }
-        guard ctx != nil else {
+        guard let ctx else {
             throw WhisperError.load(String(cString: err))
+        }
+        // 显存被占满时 whisper 会静默退回 CPU；记下来便于后续判断是否值得重试/降模型
+        if snwh_gpu_fallback(ctx) != 0 {
+            Log.warn("whisper GPU 初始化失败，已自动降级 CPU：\(modelURL.lastPathComponent)")
+        } else {
+            Log.info("whisper 后端：\(snwh_uses_gpu(ctx) != 0 ? "Metal" : "CPU")（\(modelURL.lastPathComponent)）")
         }
     }
 
     deinit {
+        Self.lifecycleLock.lock()
+        defer { Self.lifecycleLock.unlock() }
         if let ctx { snwh_free(ctx) }
     }
 
@@ -94,6 +108,11 @@ final class WhisperEngine {
                                     src: text, zh: nil))
         }
         let lang = snwh_detected_language(ctx).map { String(cString: $0) } ?? "auto"
+        // 时间轴缩水通常意味着单位/映射出错，宁可留下日志也不要静默产出错位字幕
+        let audioMs = snwh_audio_ms(ctx)
+        if audioMs > 60_000, let last = segments.last, last.end < audioMs / 2 {
+            Log.warn("转录时间轴疑似异常：字幕结束于 \(last.end / 1000)s，音频总长 \(audioMs / 1000)s")
+        }
         return (segments, lang)
     }
 }

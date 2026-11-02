@@ -51,7 +51,7 @@ enum Segments {
         let budget = isCJK(language) ? lineLen + 2 : lineLen * 2 + 4
         var result: [Segment] = []
 
-        for seg in segments {
+        for seg in mergeFragments(segments, language: language) {
             let text = seg.src
             guard text.count > budget else {
                 result.append(seg)
@@ -82,6 +82,37 @@ enum Segments {
         return fixTiming(result)
     }
 
+    /// whisper 偶尔会吐出几十毫秒的碎片（如“いただきたい”被切到 40ms），
+    /// 两行字幕会闪一下。间隔很近时并入相邻行，保证至少可读。
+    static func mergeFragments(_ input: [Segment], language: String) -> [Segment] {
+        let cjk = isCJK(language)
+        func join(_ a: String, _ b: String) -> String {
+            a.isEmpty ? b : (b.isEmpty ? a : (cjk ? a + b : a + " " + b))
+        }
+        var segs = input.sorted { $0.start < $1.start }
+        var i = 0
+        while i < segs.count {
+            guard segs[i].end - segs[i].start < 300 else { i += 1; continue }
+            if i > 0, segs[i].start - segs[i - 1].end <= 200,
+               segs[i - 1].end - segs[i - 1].start >= 300 {
+                segs[i - 1].src = join(segs[i - 1].src, segs[i].src)
+                segs[i - 1].zh = join(segs[i - 1].zh ?? "", segs[i].zh ?? "").nilIfEmpty
+                segs[i - 1].end = max(segs[i - 1].end, segs[i].end)
+                segs.remove(at: i)
+                continue
+            }
+            if i + 1 < segs.count, segs[i + 1].start - segs[i].end <= 200 {
+                segs[i].src = join(segs[i].src, segs[i + 1].src)
+                segs[i].zh = join(segs[i].zh ?? "", segs[i + 1].zh ?? "").nilIfEmpty
+                segs[i].end = max(segs[i].end, segs[i + 1].end)
+                segs.remove(at: i + 1)
+                continue
+            }
+            i += 1
+        }
+        return segs
+    }
+
     private static func splitText(_ text: String, budget: Int) -> [String] {
         var pieces: [String] = []
         var rest = Substring(text)
@@ -108,24 +139,21 @@ enum Segments {
     }
 
     /// 最短 800ms、最长 10s、相邻重叠修正。
-    /// 顺序很重要：先修重叠，再钳最短时长；反过来会把刚补到 800ms 的前一段压回去。
+    /// 按起点排序后再逐条收口：先保证不侵入下一条，再在可用空间内补到最短时长。
+    /// 若下一条来得太快（间隔不足 800ms），宁可短一点也不重叠——重叠会让两行字叠在一起。
     static func fixTiming(_ input: [Segment]) -> [Segment] {
-        var segs = input
-        for i in 1..<segs.count {
-            let a = segs[i - 1]
-            if a.end > segs[i].start {
-                segs[i - 1].end = max(segs[i].start, a.start + 200)
-            }
-        }
+        var segs = input.sorted { $0.start < $1.start }
         for i in segs.indices {
-            var dur = segs[i].end - segs[i].start
-            if dur < 800 {
-                segs[i].end = segs[i].start + 800
-                dur = 800
+            let start = max(segs[i].start, 0)
+            var end = min(max(segs[i].end, start + 800), start + 10_000)
+            if i + 1 < segs.count {
+                let nextStart = segs[i + 1].start
+                if nextStart > start {
+                    end = min(end, nextStart - 20)
+                }
             }
-            if dur > 10_000 {
-                segs[i].end = segs[i].start + 10_000
-            }
+            segs[i].start = start
+            segs[i].end = max(end, start + 1)
         }
         return segs
     }
@@ -143,7 +171,7 @@ enum Segments {
                 cut = nil
             }
             if let c = cut {
-                lines.append(String(window[window.startIndex..<c]).trimmingCharacters(in: .whitespaces))
+                lines.append(String(window[window.startIndex...c]).trimmingCharacters(in: .whitespaces))
                 rest = rest[rest.index(after: c)...]
             } else {
                 lines.append(String(rest.prefix(width)))
@@ -154,4 +182,8 @@ enum Segments {
         if !rest.isEmpty { lines.append(String(rest)) }
         return lines.joined(separator: joiner)
     }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }

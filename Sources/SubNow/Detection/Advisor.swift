@@ -17,10 +17,11 @@ final class Advisor {
         let videoPath: String
         let player: String
         let viaIPC: Bool
+        let socketPath: String?
     }
 
     var onOffer: ((Offer) -> Void)?
-    var onNotReady: ((String, String) -> Void)?   // (videoPath, reason)
+    var onNotReady: ((String, String, String?) -> Void)?   // (videoPath, reason, socketPath)
 
     func handle(_ snapshot: PlayerMonitor.Snapshot) async {
         guard let active = snapshot.playbacks.first else {
@@ -87,7 +88,7 @@ final class Advisor {
         if !center.isBaseReady {
             if notReadyNotifiedThisSession.insert(playback.videoPath).inserted {
                 Log.info("检测到缺字幕但尚未就绪：\(playback.videoPath)（\(center.missingSummary)）")
-                onNotReady?(playback.videoPath, center.missingSummary)
+                onNotReady?(playback.videoPath, center.missingSummary, playback.socketPath)
             }
             return
         }
@@ -95,7 +96,8 @@ final class Advisor {
         // ④ 提示（会话内一次）
         offeredThisSession.insert(playback.videoPath)
         Log.info("检测到缺中文字幕：\(playback.videoPath)（\(playback.player)，IPC=\(playback.viaIPC)）")
-        onOffer?(Offer(videoPath: playback.videoPath, player: playback.player, viaIPC: playback.viaIPC))
+        onOffer?(Offer(videoPath: playback.videoPath, player: playback.player,
+                       viaIPC: playback.viaIPC, socketPath: playback.socketPath))
     }
 
     /// 用户点了"忽略本次"→ 永久静默

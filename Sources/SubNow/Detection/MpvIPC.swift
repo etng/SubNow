@@ -121,8 +121,14 @@ enum MpvIPC {
         return reply.data as? String
     }
 
-    static func trackList(socketPath: String) -> [Track]? {
-        guard let reply = command(["get_property", "track-list"], socketPath: socketPath),
+    /// 播放器暂停状态；socket 不可达或属性读取失败返回 nil。
+    static func isPaused(socketPath: String) -> Bool? {
+        guard let reply = command(["get_property", "pause"], socketPath: socketPath),
+              reply.error == "success" else { return nil }
+        return reply.data as? Bool
+    }
+
+    static func trackList(socketPath: String) -> [Track]? {        guard let reply = command(["get_property", "track-list"], socketPath: socketPath),
               reply.error == "success", let array = reply.data as? [[String: Any]] else { return nil }
         return array.map { dict in
             Track(
@@ -165,14 +171,20 @@ enum MpvIPC {
         return true
     }
 
-    /// OSD 提示（4 秒）
-    static func showText(_ text: String, socketPath: String) {
-        _ = command(["show-text", text, "4000"], socketPath: socketPath)
+    /// OSD 提示（6 秒）
+    @discardableResult
+    static func showText(_ text: String, socketPath: String) -> Bool {
+        command(["show-text", text, "6000"], socketPath: socketPath)?.error == "success"
     }
 
     /// 该 socket 播放的文件是否等于给定视频（挂载前必须校验）
     static func isPlaying(_ videoPath: String, socketPath: String) -> Bool {
-        currentPath(socketPath: socketPath) == videoPath
+        guard let current = currentPath(socketPath: socketPath) else { return false }
+        return normalizedPath(current) == normalizedPath(videoPath)
+    }
+
+    private static func normalizedPath(_ path: String) -> String {
+        URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
     }
 
     /// 判断"当前已启用"的字幕轨里有没有中文（type=sub、selected、lang/title 指向中文）。

@@ -11,8 +11,25 @@ enum Paths {
         .appendingPathComponent("SubNow", isDirectory: true)
     static let binDir: URL = appSupport.appendingPathComponent("bin", isDirectory: true)      // 下载的 ffmpeg 等工具
     static let tmpDir: URL = appSupport.appendingPathComponent("tmp", isDirectory: true)      // 任务工作目录
+    /// 持久工作区：每部影片一个目录，保留音频、transcript.json 与全部字幕成品。
+    static let workspaceDir: URL = appSupport.appendingPathComponent("workspace", isDirectory: true)
     static let stateFile: URL = appSupport.appendingPathComponent("state.json")
+    static let historyFile: URL = {
+        if let p = ProcessInfo.processInfo.environment["SUBNOW_HISTORY_FILE"], !p.isEmpty {
+            return URL(fileURLWithPath: p)
+        }
+        return appSupport.appendingPathComponent("history.json")
+    }()
     static let lockFile: URL = appSupport.appendingPathComponent("subnow.lock")
+
+    /// 未完成任务快照（音频/转录/阶段），与通知记账分开。
+    /// 测试可用 SUBNOW_JOBS_FILE 指向临时文件，避免污染真实用户数据。
+    static let jobsFile: URL = {
+        if let p = ProcessInfo.processInfo.environment["SUBNOW_JOBS_FILE"], !p.isEmpty {
+            return URL(fileURLWithPath: p)
+        }
+        return appSupport.appendingPathComponent("jobs.json")
+    }()
 
     static let logFile: URL = home
         .appendingPathComponent("Library", isDirectory: true)
@@ -26,7 +43,8 @@ enum Paths {
     static var socketCandidates: [String] { ["/tmp/subnow-mpv.sock"] }
 
     static func ensureAll() {
-        let dirs = [appSupport, binDir, tmpDir, logFile.deletingLastPathComponent(), defaultModelsDir]
+        let dirs = [appSupport, binDir, tmpDir, workspaceDir,
+                    logFile.deletingLastPathComponent(), defaultModelsDir]
         for d in dirs {
             try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
         }

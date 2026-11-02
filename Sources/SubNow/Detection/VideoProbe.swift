@@ -93,6 +93,44 @@ enum VideoProbe {
         }
     }
 
+    /// 媒体总时长（秒）。网络挂载盘可能卡住：8 秒超时，失败返回 nil。
+    /// 调用方必须在后台线程使用（同步阻塞）。
+    static func durationSeconds(of video: URL, ffprobeURL: URL?) -> TimeInterval? {
+        guard let ffprobeURL else { return nil }
+
+        let p = Process()
+        p.executableURL = ffprobeURL
+        p.arguments = [
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=nw=1:nk=1",
+            video.path,
+        ]
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = FileHandle.nullDevice
+
+        do {
+            try p.run()
+            let deadline = DispatchTime.now() + 8
+            let done = DispatchSemaphore(value: 0)
+            p.terminationHandler = { _ in done.signal() }
+            if !p.isRunning { done.signal() }  // 极小文件可能在 handler 安装前就退出
+            if done.wait(timeout: deadline) == .timedOut {
+                p.terminate()
+                return nil
+            }
+            guard p.terminationStatus == 0 else { return nil }
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            guard let text = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+                  let seconds = Double(text), seconds.isFinite, seconds > 0 else { return nil }
+            return seconds
+        } catch {
+            return nil
+        }
+    }
+
     // MARK: - 综合
 
     /// 异步探测：ffprobe 可能因网络挂载盘卡住数十秒，必须离开 MainActor。
