@@ -69,16 +69,20 @@ jobs:
               --title "SubNow $VERSION" --generate-notes
           fi
 
-      - name: 未配置 tap token 提示
+      - name: 未配置 tap 部署密钥提示
         if: env.TAP_TOKEN == ''
-        run: echo "::warning::未配置 HOMEBREW_TAP_TOKEN，已跳过 etng/homebrew-taps 更新"
+        run: echo "::warning::未配置 HOMEBREW_TAP_TOKEN（SSH 部署私钥），已跳过 etng/homebrew-taps 更新"
 
       - name: 更新 Homebrew Tap
         if: env.TAP_TOKEN != ''
         run: |
           set -euo pipefail
           TAP_REPO="etng/homebrew-taps"
-          git clone --depth 1 "https://github.com/${TAP_REPO}.git" tap
+          KEY="$RUNNER_TEMP/tap_deploy_key"
+          install -m 600 /dev/null "$KEY"
+          printf '%s\n' "$TAP_TOKEN" > "$KEY"
+          export GIT_SSH_COMMAND="ssh -i '$KEY' -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+          git clone --depth 1 "git@github.com:${TAP_REPO}.git" tap
           mkdir -p tap/Casks
           cp dist/subnow.rb tap/Casks/subnow.rb
           bash scripts/update_tap_readme.sh tap "$GITHUB_REPOSITORY"
@@ -91,4 +95,4 @@ jobs:
           fi
           git -C tap commit -m "subnow ${VERSION}"
           BRANCH="$(git -C tap symbolic-ref --quiet --short HEAD || echo main)"
-          git -C tap push "https://x-access-token:${TAP_TOKEN}@github.com/${TAP_REPO}.git" "HEAD:${BRANCH}"
+          git -C tap push origin "HEAD:${BRANCH}"
