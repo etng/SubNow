@@ -1,6 +1,11 @@
 import AppKit
 import ServiceManagement
 
+/// 翻转坐标的滚动文档视图：内容比可视区矮时也贴顶，而不是被 NSScrollView 推到底部。
+private final class FlippedDocumentView: NSView {
+    override var isFlipped: Bool { true }
+}
+
 /// 设置窗口：播放器 / 字幕引擎 / 翻译 / 行为 / 维护 五个分区。
 /// 纪律：单例 controller、isReleasedWhenClosed=false、可反复开关、改动即时保存。
 @MainActor
@@ -12,6 +17,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private var sidebarButtons: [NSButton] = []
     private var observerToken: UUID?
     private var lastPageRebuild = Date.distantPast
+    private var pendingPageRebuild: Task<Void, Never>?
 
     // 缓存需要在刷新间保持的控件
     private var ollamaModels: [String] = []
@@ -37,9 +43,22 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         ComponentCenter.shared.refreshOllamaAsync()
         observerToken = ComponentCenter.shared.addObserver { [weak self] in
             guard let self, self.window?.isVisible == true else { return }
-            let now = Date()
-            guard now.timeIntervalSince(self.lastPageRebuild) >= 0.5 else { return }
-            self.lastPageRebuild = now
+            self.schedulePageRebuild()
+        }
+    }
+
+    /// 合并节流：冷却期内只安排一次尾随重建，避免丢弃 Ollama 探测等最终状态
+    private func schedulePageRebuild() {
+        guard pendingPageRebuild == nil else { return }
+        let delay = max(0, 0.5 - Date().timeIntervalSince(lastPageRebuild))
+        pendingPageRebuild = Task { @MainActor [weak self] in
+            if delay > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.pendingPageRebuild = nil
+            guard self.window?.isVisible == true else { return }
+            self.lastPageRebuild = Date()
             self.rebuildCurrentPage()
         }
     }
@@ -47,13 +66,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     required init?(coder: NSCoder) { fatalError("不支持") }
 
     func show() {
-        ComponentCenter.shared.refresh()
-        ComponentCenter.shared.refreshOllamaAsync()
         selectedTabIndex = 0
         updateSidebarSelection()
         rebuildCurrentPage()
         showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
+        // 窗口可见后再探测：观察者只在可见时重建，先前完成的结果会被丢掉
+        ComponentCenter.shared.refresh()
+        ComponentCenter.shared.refreshOllamaAsync()
     }
 
     /// 调试用：直接切到指定分页
@@ -132,8 +152,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
             contentHost.leadingAnchor.constraint(equalTo: effect.trailingAnchor, constant: 28),
             contentHost.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -28),
-            contentHost.topAnchor.constraint(equalTo: container.topAnchor, constant: 26),
-            contentHost.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -20),
+            contentHost.topAnchor.constraint(equalTo: container.topAnchor, constant: 18),
+            contentHost.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -16),
         ])
         updateSidebarSelection()
         rebuildCurrentPage()
@@ -178,7 +198,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         scroll.drawsBackground = false
         scroll.borderType = .noBorder
 
-        let document = NSView()
+        let document = FlippedDocumentView()
         document.translatesAutoresizingMaskIntoConstraints = false
         page.translatesAutoresizingMaskIntoConstraints = false
         document.addSubview(page)
@@ -208,7 +228,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let holder = NSView()
         holder.addSubview(label)
         NSLayoutConstraint.activate([
-            label.topAnchor.constraint(equalTo: holder.topAnchor, constant: 14),
+            label.topAnchor.constraint(equalTo: holder.topAnchor),
             label.bottomAnchor.constraint(equalTo: holder.bottomAnchor),
             label.leadingAnchor.constraint(equalTo: holder.leadingAnchor, constant: 2),
             label.trailingAnchor.constraint(lessThanOrEqualTo: holder.trailingAnchor),
@@ -729,6 +749,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func ollamaURLChanged(_ sender: NSTextField) {
         Config.shared.ollamaURL = sender.stringValue.trimmingCharacters(in: .whitespaces)
+        ComponentCenter.shared.refreshOllamaAsync()
     }
 
     @objc private func detectOllama() {
@@ -736,6 +757,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             do {
                 let models = try await OllamaManager.shared.listModels(baseURL: Config.shared.ollamaURL)
                 self.ollamaModels = models
+                ComponentCenter.shared.refreshOllamaAsync()
                 self.rebuildCurrentPage()
                 let alert = NSAlert()
                 alert.messageText = "Ollama 在线"

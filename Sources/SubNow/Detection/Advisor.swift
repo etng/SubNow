@@ -81,6 +81,9 @@ final class Advisor {
 
         // ③ 就绪门槛：没就绪只提示一次，绝不触发流水线
         let center = ComponentCenter.shared
+        if !center.isBaseReady, Config.shared.translationKind == .ollama {
+            await center.ensureOllamaProbe()
+        }
         if !center.isBaseReady {
             if notReadyNotifiedThisSession.insert(playback.videoPath).inserted {
                 Log.info("检测到缺字幕但尚未就绪：\(playback.videoPath)（\(center.missingSummary)）")

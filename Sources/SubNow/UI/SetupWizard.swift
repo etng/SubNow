@@ -9,6 +9,7 @@ final class SetupWizardController: NSWindowController, NSWindowDelegate {
     private let stack = NSStackView()
     private var observerToken: UUID?
     private var lastRebuild = Date.distantPast
+    private var pendingRebuild: Task<Void, Never>?
 
     init() {
         let window = NSWindow(
@@ -22,22 +23,39 @@ final class SetupWizardController: NSWindowController, NSWindowDelegate {
         super.init(window: window)
         window.delegate = self
         window.contentView = buildContent()
-        // 组件状态实时刷新（Ollama 异步探测、下载进度都会推到这里；节流防下载进度闪烁）
+        // 组件状态实时刷新（Ollama 异步探测、下载进度都会推到这里；合并节流防下载进度闪烁）
         observerToken = ComponentCenter.shared.addObserver { [weak self] in
             guard let self, self.window?.isVisible == true else { return }
-            let now = Date()
-            guard now.timeIntervalSince(self.lastRebuild) >= 0.5 else { return }
-            self.lastRebuild = now
-            self.rebuild()
+            self.scheduleRebuild()
         }
     }
 
     required init?(coder: NSCoder) { fatalError("不支持") }
 
     func present() {
+        // 先显示窗口：观察者只在可见时重建，若探测在 showWindow 前完成，
+        // 完成通知会被丢弃，界面会永远停在「检测中…」。
         rebuild()
         showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
+        ComponentCenter.shared.refresh()
+        ComponentCenter.shared.refreshOllamaAsync()
+    }
+
+    /// 节流重建：冷却期内只安排一次尾随重建，不丢弃最终状态
+    private func scheduleRebuild() {
+        guard pendingRebuild == nil else { return }
+        let delay = max(0, 0.5 - Date().timeIntervalSince(lastRebuild))
+        pendingRebuild = Task { @MainActor [weak self] in
+            if delay > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.pendingRebuild = nil
+            guard self.window?.isVisible == true else { return }
+            self.lastRebuild = Date()
+            self.rebuild()
+        }
     }
 
     // MARK: - UI
@@ -76,8 +94,7 @@ final class SetupWizardController: NSWindowController, NSWindowDelegate {
         stack.addArrangedSubview(intro)
         stack.setCustomSpacing(14, after: intro)
 
-        ComponentCenter.shared.refresh()
-        ComponentCenter.shared.refreshOllamaAsync()
+        // 只渲染当前状态：探测放在 present()，避免每次观察者重建都重新发起探测
         for id in ComponentCenter.ComponentID.allCases {
             stack.addArrangedSubview(componentRow(id))
         }

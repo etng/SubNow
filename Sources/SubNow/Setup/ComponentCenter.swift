@@ -32,6 +32,11 @@ final class ComponentCenter {
 
     private(set) var statuses: [ComponentID: Status] = [:]
     private var downloadingTasks: [ComponentID: Task<Void, Never>] = [:]
+    /// 最近一次 Ollama 探测结果。refresh() 不再把它降级回「检测中…」，
+    /// 否则组件检查窗口反复重建时会把已就绪状态冲掉，提醒门槛随之失效。
+    private var ollamaState: State?
+    private var ollamaProbeTask: Task<Void, Never>?
+    private var ollamaProbeGeneration = 0
 
     /// 状态变化观察者（UI 多处订阅）
     private var observers: [UUID: () -> Void] = [:]
@@ -156,38 +161,50 @@ final class ComponentCenter {
             }
             return .ready(detail: "\(cfg.openAIModel) @ \(cfg.openAIBaseURL)")
         case .ollama:
-            return .missing(detail: "检测中…")  // 异步刷新为真实状态
+            return ollamaState ?? .missing(detail: "检测中…")
         }
     }
 
-    /// Ollama 异步探测（listModels + 目标模型是否已拉取）
+    /// Ollama 异步探测（listModels + 目标模型是否已拉取）。
+    /// 新探测会取消旧探测；结果未变化时不通知观察者，避免 UI 重建风暴。
     func refreshOllamaAsync() {
         let cfg = Config.shared
         guard cfg.translationKind == .ollama else { return }
         let baseURL = cfg.ollamaURL
-        Task { @MainActor in
+        let draftModel = cfg.ollamaDraftModel
+        let finalModel = cfg.ollamaFinalModel
+        ollamaProbeTask?.cancel()
+        ollamaProbeGeneration += 1
+        let generation = ollamaProbeGeneration
+        ollamaProbeTask = Task { @MainActor in
             let models = (try? await OllamaManager.shared.listModels(baseURL: baseURL)) ?? []
+            guard generation == ollamaProbeGeneration else { return }
+            ollamaProbeTask = nil
             let state: State
             if models.isEmpty {
                 state = .missing(detail: "Ollama 服务不可达（\(baseURL)）")
+            } else if models.contains(draftModel) && models.contains(finalModel) {
+                state = .ready(detail: "Ollama：\(draftModel) + \(finalModel)")
+            } else if models.contains(draftModel) {
+                state = .ready(detail: "Ollama：\(draftModel)（精做模型缺 \(finalModel)，仅影响精做）")
             } else {
-                let haveDraft = models.contains(cfg.ollamaDraftModel)
-                let haveFinal = models.contains(cfg.ollamaFinalModel)
-                if haveDraft && haveFinal {
-                    state = .ready(detail: "Ollama：\(cfg.ollamaDraftModel) + \(cfg.ollamaFinalModel)")
-                } else if haveDraft {
-                    state = .ready(detail: "Ollama：\(cfg.ollamaDraftModel)（精做模型缺 \(cfg.ollamaFinalModel)，仅影响精做）")
-                    // 草稿翻译可用即视为基础就绪
-                    statuses[.translation] = Status(id: .translation, state: state, required: true)
-                    notifyObservers()
-                    return
-                } else {
-                    state = .missing(detail: "Ollama 在线，但缺翻译模型 \(cfg.ollamaDraftModel)")
-                }
+                state = .missing(detail: "Ollama 在线，但缺翻译模型 \(draftModel)")
             }
+            let changed = ollamaState != state
+            ollamaState = state
             statuses[.translation] = Status(id: .translation, state: state, required: true)
-            notifyObservers()
+            if changed { notifyObservers() }
         }
+    }
+
+    /// 判定就绪前调用：有探测在途就等待；没有则重新探测一次。
+    /// 避免启动瞬间或 Ollama 后启动时，把「检测中…」误判成「未就绪」。
+    func ensureOllamaProbe() async {
+        guard Config.shared.translationKind == .ollama else { return }
+        if ollamaProbeTask == nil {
+            refreshOllamaAsync()
+        }
+        await ollamaProbeTask?.value
     }
 
     // MARK: - 动作

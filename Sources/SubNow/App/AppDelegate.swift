@@ -24,6 +24,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let tab = ProcessInfo.processInfo.environment["SUBNOW_SETTINGS_TAB"], let idx = Int(tab) {
                 SettingsWindowController.shared.selectTab(idx)
             }
+        } else if ProcessInfo.processInfo.environment["SUBNOW_SHOW_WIZARD"] == "1" {
+            SetupWizardController.shared.present()
         }
 
         ComponentCenter.shared.refresh()
@@ -183,7 +185,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // 菜单栏应用铁律：关窗绝不退出
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
-    /// 退出前等任务收尾并确保子进程全部退出；用 terminateLater 换取异步清理时间。
+    /// 退出前等任务收尾并确保子进程全部退出。
+    /// 不用 terminateLater：它依赖嵌套 runloop 调度主队列，从 SIGTERM 的
+    /// dispatch source 回调进入时清理 Task 永远排不上，进程会卡在退出中。
+    /// 改为先取消退出、异步清理后再二次 terminate（此时直接放行）。
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard !isTerminating else { return .terminateNow }
         isTerminating = true
@@ -194,9 +199,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             await ProcessRegistry.shared.terminateAll(grace: 2)
             Log.info("清理完成")
             Log.flush()
-            NSApp.reply(toApplicationShouldTerminate: true)
+            NSApp.terminate(nil)
         }
-        return .terminateLater
+        return .terminateCancel
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -208,9 +213,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         signal(SIGTERM, SIG_IGN)
         let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
         source.setEventHandler { [weak self] in
-            // 不能在 dispatch source 回调里直接 terminate：主队列不可重入，
-            // terminateLater 的嵌套 runloop 永远调度不到清理 Task，进程会卡死。
-            DispatchQueue.main.async { self?.quit() }
+            self?.quit()
         }
         source.resume()
         sigtermSource = source

@@ -1,6 +1,6 @@
 import AppKit
 
-// SubNow — 马上有字幕
+// SubNow — 菜单栏字幕生成器
 // 菜单栏常驻应用：检测 mpv/IINA 播放 → 提示生成中文字幕 → 分阶段渐进生成。
 
 MainActor.assumeIsolated {
