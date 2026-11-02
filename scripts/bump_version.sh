@@ -25,15 +25,15 @@ case "$PART" in
     patch) PATCH=$((PATCH + 1)) ;;
     minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
     major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
-    *) echo "✗ 未知的版本段：$PART（可选 patch|minor|major）"; exit 1 ;;
+    *) echo "✗ 未知的版本段：${PART}（可选 patch|minor|major）"; exit 1 ;;
 esac
 
 NEXT="${MAJOR}.${MINOR}.${PATCH}"
 if [ "$DRY_RUN" = "1" ]; then
-    echo "（dry-run）$CURRENT → $NEXT（$PART）"
+    echo "（dry-run）${CURRENT} → ${NEXT}（${PART}）"
     exit 0
 fi
 
 printf '%s\n' "$NEXT" > VERSION
-echo "✓ $CURRENT → $NEXT（$PART）"
+echo "✓ ${CURRENT} → ${NEXT}（${PART}）"
 echo "  下一步：git add VERSION && git commit -m \"release: v$NEXT\" && git tag v$NEXT && git push origin HEAD --tags"

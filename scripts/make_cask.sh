@@ -82,4 +82,4 @@ cask "subnow" do
 end
 RUBY
 
-echo "✓ Cask: $OUT（sha256 ${SHA}）"
+echo "✓ Cask: ${OUT}（sha256 ${SHA}）"
