@@ -268,11 +268,15 @@ final class Translator {
             provider = OpenAICompatibleProvider(baseURL: cfg.openAIBaseURL,
                                                 apiKey: cfg.openAIAPIKey, model: cfg.openAIModel)
         case .appleFM:
+            #if canImport(FoundationModels)
             if #available(macOS 26, *) {
                 provider = AppleFMProvider()
             } else {
                 provider = NoneProvider()
             }
+            #else
+            provider = NoneProvider()
+            #endif
         case .none:
             provider = NoneProvider()
         }
@@ -371,6 +375,7 @@ final class Translator {
 
 // MARK: - Apple 系统模型 Provider（macOS 26+，Foundation Models）
 
+#if canImport(FoundationModels)
 @available(macOS 26, *)
 struct AppleFMProvider: TranslatorProvider {
     let label = "Apple 系统模型"
@@ -395,3 +400,4 @@ struct AppleFMProvider: TranslatorProvider {
         return Prompts.parseTranslations(response.content)
     }
 }
+#endif
