@@ -1,0 +1,585 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SubNow — 让中文字幕住进播放器</title>
+  <meta name="description" content="SubNow 是 mpv / IINA 的菜单栏字幕工具。检测到视频缺中文字幕时提醒你，在本机转录、翻译，并把双语字幕挂回播放器。免费，Apple Silicon，macOS 14+。">
+  <meta name="theme-color" content="#f8f9f6">
+  <link rel="icon" href="assets/favicon-32.png" sizes="32x32">
+  <link rel="apple-touch-icon" href="assets/subnow-icon.png">
+  <link rel="canonical" href="https://etng.github.io/SubNow/">
+  <meta property="og:type" content="website">
+  <meta property="og:locale" content="zh_CN">
+  <meta property="og:site_name" content="SubNow">
+  <meta property="og:title" content="SubNow — 让中文字幕住进播放器">
+  <meta property="og:description" content="检测到 mpv / IINA 缺中文字幕时提醒你，在本机转录、翻译，并把双语字幕挂回播放器。免费，Apple Silicon，macOS 14+。">
+  <meta property="og:url" content="https://etng.github.io/SubNow/">
+  <meta property="og:image" content="https://etng.github.io/SubNow/assets/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="SubNow 产品页：播放器里的双语字幕与系统通知">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="SubNow — 让中文字幕住进播放器">
+  <meta name="twitter:description" content="mpv / IINA 的菜单栏字幕工具。本机转录、翻译，把双语字幕挂回播放器。">
+  <meta name="twitter:image" content="https://etng.github.io/SubNow/assets/og.png">
+  <link rel="stylesheet" href="styles.css">
+  <script>
+    try {
+      if (localStorage.getItem("subnow-theme") === "dark") {
+        document.documentElement.dataset.theme = "dark";
+      }
+    } catch (error) {}
+  </script>
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "SubNow",
+      "applicationCategory": "MultimediaApplication",
+      "operatingSystem": "macOS 14+",
+      "softwareVersion": "0.1.4",
+      "description": "mpv / IINA 的菜单栏字幕工具。检测到视频缺中文字幕时提醒，在本机转录、翻译，并把双语字幕挂回播放器。",
+      "url": "https://etng.github.io/SubNow/",
+      "downloadUrl": "https://github.com/etng/SubNow/releases/latest",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "CNY"
+      }
+    }
+  </script>
+</head>
+<body id="top">
+  <a class="skip-link" href="#main">跳到正文</a>
+
+  <header class="nav">
+    <div class="container nav-inner">
+      <a class="brand" href="#top" aria-label="SubNow 首页">
+        <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="3" y="8" width="18" height="5" rx="2.5" fill="currentColor"></rect>
+          <rect x="7" y="15.5" width="10" height="4" rx="2" fill="currentColor"></rect>
+        </svg>
+        <span>SubNow<span class="brand-dot">.</span></span>
+      </a>
+      <nav class="nav-links" aria-label="主导航">
+        <a href="#features">功能</a>
+        <a href="#workflow">流程</a>
+        <a href="#requirements">要求</a>
+        <a href="#faq">常见问题</a>
+      </nav>
+      <div class="nav-actions">
+        <button class="icon-btn" id="themeToggle" type="button" aria-label="切换到深色模式">
+          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12.8A8.5 8.5 0 1 1 11.2 3a6.5 6.5 0 0 0 9.8 9.8Z"></path>
+          </svg>
+          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="4"></circle>
+            <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path>
+          </svg>
+        </button>
+        <a class="btn btn-primary btn-small" href="https://github.com/etng/SubNow/releases/latest">下载</a>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero">
+      <div class="container hero-grid">
+        <div class="hero-copy">
+          <span class="version-chip"><span class="status-dot"></span>v0.1.4 · macOS 14+ · Apple Silicon</span>
+          <h1>让中文字幕，<br><span class="accent">住进播放器</span>。</h1>
+          <p class="hero-lede">SubNow 是一个菜单栏字幕工具。你在 mpv 或 IINA 里播放没有中文字幕的视频时，它会提醒你；确认后在本机转录、翻译，并把字幕挂回播放器。</p>
+          <div class="hero-actions">
+            <a class="btn btn-primary" href="#install">安装 SubNow</a>
+            <a class="btn btn-ghost" href="#workflow">看它怎么工作</a>
+          </div>
+          <p class="hero-note">首次启动会引导下载约 1.5 GB 的语音模型。安装包约 9 MB。</p>
+          <ul class="hero-checks">
+            <li>
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 8 3 3 7-7"></path></svg>
+              不上传视频
+            </li>
+            <li>
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 8 3 3 7-7"></path></svg>
+              不需要账号
+            </li>
+            <li>
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 8 3 3 7-7"></path></svg>
+              字幕自动加载
+            </li>
+          </ul>
+        </div>
+
+        <div class="hero-visual">
+          <div class="stage" role="img" aria-label="SubNow 界面示意：播放器里显示中文与原文双语字幕，系统通知提供「生成字幕」与「忽略本次」两个操作。">
+            <div class="orbit orbit-a"></div>
+            <div class="orbit orbit-b"></div>
+            <div class="stage-glow"></div>
+            <span class="stage-label">SUBNOW / STAGE 01</span>
+
+            <div class="stage-window">
+              <div class="window-bar">
+                <span class="traffic"></span>
+                <span class="traffic"></span>
+                <span class="traffic"></span>
+                <span class="window-title">周末放映 — IINA</span>
+                <span class="window-meta">1080P</span>
+              </div>
+              <div class="player-frame">
+                <div class="player-osd">
+                  <span class="status-dot"></span>
+                  <span>翻译 · 62%</span>
+                  <span class="osd-track"><i style="width:62%"></i></span>
+                </div>
+                <div class="player-subtitles">
+                  <span class="sub-zh">我们今晚先把这一集看完。</span>
+                  <span class="sub-orig">Let's finish this episode tonight.</span>
+                </div>
+                <div class="player-controls">
+                  <span class="play-glyph"></span>
+                  <span>12:04</span>
+                  <span class="control-track"><i></i></span>
+                  <span>42:10</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="notification">
+              <div class="notif-head">
+                <img src="assets/subnow-icon.png" alt="" width="30" height="30">
+                <div class="notif-app"><strong>SubNow</strong><span>现在</span></div>
+              </div>
+              <div class="notif-title">《周末放映》没有中文字幕</div>
+              <div class="notif-body">IINA 正在播放 · 点「生成字幕」自动生成中文字幕（先出粗稿，随后替换为精做版本）</div>
+              <div class="notif-actions">
+                <span class="notif-btn primary">生成字幕</span>
+                <span class="notif-btn">忽略本次</span>
+              </div>
+            </div>
+
+            <span class="stage-caption">界面示意 · 通知、生成与挂载都在播放器旁完成</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="foundation" aria-label="产品基础能力">
+      <div class="container foundation-grid">
+        <div class="foundation-item">
+          <svg class="foundation-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="7" y="7" width="10" height="10" rx="2"></rect>
+            <path d="M9 3v4M15 3v4M9 17v4M15 17v4M3 9h4M3 15h4M17 9h4M17 15h4"></path>
+          </svg>
+          <div>
+            <div class="foundation-title">本机转录</div>
+            <p class="foundation-desc">whisper.cpp 直接编译进应用，Metal 加速，视频不出本机。</p>
+          </div>
+        </div>
+        <div class="foundation-item">
+          <svg class="foundation-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"></path>
+            <path d="M10 21h4"></path>
+          </svg>
+          <div>
+            <div class="foundation-title">缺字幕才出现</div>
+            <p class="foundation-desc">每 3 秒检测 mpv / IINA，连续两轮确认缺中文字幕才提醒。</p>
+          </div>
+        </div>
+        <div class="foundation-item">
+          <svg class="foundation-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 3 3 8l9 5 9-5-9-5Z"></path>
+            <path d="m3 12 9 5 9-5"></path>
+            <path d="m3 16 9 5 9-5"></path>
+          </svg>
+          <div>
+            <div class="foundation-title">渐进交付</div>
+            <p class="foundation-desc">原文先挂，双语粗稿随后，精做版完成后再热替换。</p>
+          </div>
+        </div>
+        <div class="foundation-item">
+          <svg class="foundation-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"></path>
+            <path d="M8 13h8"></path>
+          </svg>
+          <div>
+            <div class="foundation-title">文件留在本机</div>
+            <p class="foundation-desc">默认在视频旁保留双语 ASS，全部成品与转录记录都在工作区。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section scenes" aria-labelledby="scenes-title">
+      <div class="container">
+        <div class="section-head">
+          <span class="eyebrow">Use cases</span>
+          <h2 id="scenes-title">适合这些看片时刻。</h2>
+          <p>不改变播放器习惯，也不用先把整部片子看完再处理。</p>
+        </div>
+        <div class="scenes-grid">
+          <article class="scene">
+            <svg class="scene-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3" y="5" width="18" height="14" rx="2"></rect>
+              <path d="M7 13h4M14 13h3M7 16h8"></path>
+            </svg>
+            <h3>生肉新番</h3>
+            <p>刚更新的剧集还没有字幕，通知点一下，先看原文，再等双语跟上。</p>
+          </article>
+          <article class="scene">
+            <svg class="scene-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5v-16Z"></path>
+              <path d="M4 18.5A2.5 2.5 0 0 1 6.5 16H20"></path>
+            </svg>
+            <h3>外语课程与访谈</h3>
+            <p>原文和译文上下排，暂停回看时不用切窗口查词，也不用来回拖进度。</p>
+          </article>
+          <article class="scene">
+            <svg class="scene-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3" y="4" width="18" height="5" rx="1"></rect>
+              <path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9"></path>
+              <path d="M10 13h4"></path>
+            </svg>
+            <h3>本地影视库</h3>
+            <p>老片、冷门片缺字幕文件，生成一次就留在视频旁边，下次打开自动加载。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="capabilities" id="features" aria-labelledby="features-title">
+      <div class="container">
+        <div class="cap-intro" id="workflow">
+          <span class="eyebrow">How it works</span>
+          <h2 id="features-title">它做的事，不止生成字幕。</h2>
+          <p>从发现缺字幕，到把成品挂回播放器，SubNow 都在后台完成。你只需要决定这一次要不要生成。</p>
+        </div>
+
+        <div class="cap-row">
+          <div class="cap-copy">
+            <h3>不打扰，<br>只在缺字幕时出现。</h3>
+            <p>SubNow 常驻菜单栏，每 3 秒检查一次正在播放的 mpv / IINA。连续两轮确认缺中文字幕，才会发系统通知；组件没准备好时只提示，不会启动流水线。</p>
+            <ul class="feature-list">
+              <li>
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 8 3 3 7-7"></path></svg>
+                IPC 可用时精确读取字幕轨，不靠猜
+              </li>
+              <li>
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 8 3 3 7-7"></path></svg>
+                没有 IPC 时用 ffprobe 与同名文件兜底
+              </li>
+              <li>
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 8 3 3 7-7"></path></svg>
+                「忽略本次」的视频不再重复提醒
+              </li>
+            </ul>
+          </div>
+          <figure class="panel cap-figure">
+            <div class="panel-stage">
+              <div class="menu-demo" aria-hidden="true">
+                <div class="menubar-strip">
+                  <span class="menubar-bars"><i></i><i></i></span>
+                  <span class="menubar-name">SubNow</span>
+                  <span class="menubar-right">62%</span>
+                </div>
+                <div class="menu-card">
+                  <div class="menu-item muted">就绪 · 等待播放</div>
+                  <div class="menu-sep"></div>
+                  <div class="menu-item muted">正在播放：《周末放映》（IINA）</div>
+                  <div class="menu-item indent muted">未检测到中文字幕</div>
+                  <div class="menu-item indent accent">为这个视频生成字幕</div>
+                  <div class="menu-sep"></div>
+                  <div class="menu-item">历史记录…</div>
+                  <div class="menu-item">组件就绪检查…</div>
+                  <div class="menu-item">设置…</div>
+                  <div class="menu-item">打开日志</div>
+                  <div class="menu-sep"></div>
+                  <div class="menu-item">退出 SubNow</div>
+                </div>
+              </div>
+            </div>
+            <figcaption>菜单栏菜单示意</figcaption>
+          </figure>
+        </div>
+
+        <div class="cap-row reverse">
+          <div class="cap-copy">
+            <h3>先让你看上，再慢慢变好。</h3>
+            <p>确认后自动分阶段：提取音频、本机转录、挂载原文，再翻译成双语粗稿；需要时后台用 large-v3 重做，完成后热替换。播放不中断。</p>
+            <ul class="feature-list">
+              <li>
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 8 3 3 7-7"></path></svg>
+                中文在上、原文在下，ASS 样式 56 / 38 号
+              </li>
+              <li>
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 8 3 3 7-7"></path></svg>
+                同一磁盘正在播放时，提取自动暂停让路
+              </li>
+              <li>
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 8 3 3 7-7"></path></svg>
+                并发上限 1，新打开的视频优先处理
+              </li>
+            </ul>
+          </div>
+          <figure class="panel cap-figure">
+            <div class="panel-stage">
+              <div class="player-demo" aria-hidden="true">
+                <div class="window-bar">
+                  <span class="traffic"></span>
+                  <span class="traffic"></span>
+                  <span class="traffic"></span>
+                  <span class="window-title">周末放映 — IINA</span>
+                  <span class="window-meta">精做</span>
+                </div>
+                <div class="player-frame">
+                  <div class="player-osd">
+                    <span class="status-dot"></span>
+                    <span>精做 · 34%</span>
+                    <span class="osd-track"><i style="width:34%"></i></span>
+                  </div>
+                  <div class="player-subtitles">
+                    <span class="sub-zh">我们今晚先把这一集看完。</span>
+                    <span class="sub-orig">Let's finish this episode tonight.</span>
+                  </div>
+                </div>
+                <div class="output-strip">
+                  <span class="file-chip">周末放映.ass</span>
+                  <span class="file-chip">周末放映.zh-bottom.ass</span>
+                  <span class="file-chip">周末放映.segments.json</span>
+                </div>
+              </div>
+            </div>
+            <figcaption>播放器内字幕与进度示意</figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="section free" aria-labelledby="free-title">
+      <div class="container free-grid">
+        <div class="free-copy">
+          <span class="eyebrow">Pricing</span>
+          <h2 id="free-title">现在免费。</h2>
+          <p>SubNow 目前不收费，没有订阅，也没有内购。所有功能都可以直接使用。</p>
+        </div>
+        <div>
+          <div class="free-card">
+            <div class="free-price">
+              <span class="free-amount">免费</span>
+              <span class="free-label">当前版本 · 没有试用期</span>
+            </div>
+            <dl class="free-list">
+              <div class="free-row">
+                <dt>安装</dt>
+                <dd>Homebrew Cask 或 GitHub Releases 的 DMG</dd>
+              </div>
+              <div class="free-row">
+                <dt>更新</dt>
+                <dd>brew upgrade --cask subnow；应用内不自动更新</dd>
+              </div>
+              <div class="free-row">
+                <dt>模型</dt>
+                <dd>首次启动自行下载，不随安装包分发</dd>
+              </div>
+              <div class="free-row">
+                <dt>费用</dt>
+                <dd>不扣款，也不需要绑定支付方式</dd>
+              </div>
+            </dl>
+          </div>
+          <p class="free-note">模型下载与第三方翻译 API 可能产生你自己的网络或服务费用；应用本身不扣款。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section--tight setup" id="install" aria-labelledby="install-title">
+      <div class="container">
+        <div class="section-head">
+          <span class="eyebrow">Install / 3 steps</span>
+          <h2 id="install-title">三步开始。</h2>
+          <p>安装包不大，主要时间花在第一次的模型下载上。下载支持断点续传，失败会自动回退镜像。</p>
+        </div>
+
+        <div class="setup-grid">
+          <ol class="steps">
+            <li class="step">
+              <span class="step-num">1</span>
+              <div>
+                <h3>安装应用</h3>
+                <p>用 Homebrew 安装，或从 GitHub Releases 下载 DMG。手动安装若被 Gatekeeper 拦截，按常见问题里的命令移除隔离标记。</p>
+                <div class="code-row">
+                  <code>brew install --cask etng/taps/subnow</code>
+                  <button class="copy-btn" type="button" data-copy="brew install --cask etng/taps/subnow" aria-label="复制安装命令">复制</button>
+                </div>
+              </div>
+            </li>
+            <li class="step">
+              <span class="step-num">2</span>
+              <div>
+                <h3>准备组件</h3>
+                <p>首次启动会打开组件就绪检查。语音模型约 1.5 GB，ffmpeg 缺失时会给出 brew 命令。全部就绪后，菜单栏显示「就绪」。</p>
+              </div>
+            </li>
+            <li class="step">
+              <span class="step-num">3</span>
+              <div>
+                <h3>照常播放</h3>
+                <p>用 mpv 或 IINA 打开视频。收到「没有中文字幕」的通知后点「生成字幕」，进度会显示在菜单栏和播放器左上角。</p>
+                <p>想让字幕在播放中直接挂载，可在 IINA 高级设置里开启 IPC；不配置也能在下次播放时自动加载。</p>
+              </div>
+            </li>
+          </ol>
+
+          <aside class="req-card" id="requirements" aria-labelledby="requirements-title">
+            <h3 id="requirements-title">系统要求</h3>
+            <dl class="req-list">
+              <div class="req-row">
+                <dt>系统</dt>
+                <dd>Apple Silicon · macOS 14 或更新</dd>
+              </div>
+              <div class="req-row">
+                <dt>安装包</dt>
+                <dd>DMG 约 9 MB，安装后约 20 MB；ad-hoc 签名，未做 Apple 公证</dd>
+              </div>
+              <div class="req-row">
+                <dt>模型</dt>
+                <dd>turbo 约 1.5 GB + VAD 0.9 MB；精做 large-v3 可选约 3 GB</dd>
+              </div>
+              <div class="req-row">
+                <dt>依赖</dt>
+                <dd>ffmpeg、ffprobe 自动探测，缺失时给出 brew 命令</dd>
+              </div>
+              <div class="req-row">
+                <dt>翻译</dt>
+                <dd>Ollama（默认）/ OpenAI 兼容 API / Apple 系统模型（macOS 26+）/ 不翻译</dd>
+              </div>
+              <div class="req-row">
+                <dt>播放器</dt>
+                <dd>mpv 与 IINA；VLC、QuickTime 暂不支持</dd>
+              </div>
+              <div class="req-row">
+                <dt>更新</dt>
+                <dd>应用内不自动更新，用 brew upgrade --cask subnow</dd>
+              </div>
+            </dl>
+            <p class="req-note">资源占用与耗时取决于视频长度和本机性能。并发上限为 1，新打开的视频会优先处理。</p>
+          </aside>
+        </div>
+      </div>
+    </section>
+
+    <section class="faq" id="faq" aria-labelledby="faq-title">
+      <div class="container faq-grid">
+        <div class="faq-head">
+          <span class="eyebrow">FAQ</span>
+          <h2 id="faq-title">常见问题。</h2>
+          <p>如果下面没有你想问的，可以在 <a href="https://github.com/etng/SubNow/issues">GitHub Issues</a> 里提。</p>
+        </div>
+        <div class="faq-list">
+          <details class="faq-item" id="privacy">
+            <summary>
+              视频会上传吗？
+              <svg class="faq-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 6 4 4 4-4"></path></svg>
+            </summary>
+            <p class="faq-answer">转录和本地翻译都在本机完成。只有你选择 OpenAI 兼容 API 时，字幕文本会发送到你填写的服务；视频本身不会上传。</p>
+          </details>
+          <details class="faq-item">
+            <summary>
+              必须配置 IINA 的 IPC 吗？
+              <svg class="faq-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 6 4 4 4-4"></path></svg>
+            </summary>
+            <p class="faq-answer">不是必须。配置后可以精确判断字幕轨，并在播放过程中直接热挂载；不配置也能用，字幕会生成在视频旁边，下次播放自动加载。</p>
+          </details>
+          <details class="faq-item">
+            <summary>
+              为什么不支持 Intel Mac 和 VLC？
+              <svg class="faq-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 6 4 4 4-4"></path></svg>
+            </summary>
+            <p class="faq-answer">目前只支持 Apple Silicon 和 macOS 14 以上，依靠 Metal 做转录加速；播放器只覆盖 mpv 与 IINA。VLC、QuickTime 和 Intel Mac 暂不支持。</p>
+          </details>
+          <details class="faq-item">
+            <summary>
+              「精做版」和粗稿差在哪？
+              <svg class="faq-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 6 4 4 4-4"></path></svg>
+            </summary>
+            <p class="faq-answer">粗稿用 large-v3-turbo，几分钟内可看；精做版用 large-v3 重新转录和翻译，更慢。开启自动精做后，完成会热替换；关闭就保留粗稿。</p>
+          </details>
+          <details class="faq-item">
+            <summary>
+              首次启动为什么要下载模型？
+              <svg class="faq-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 6 4 4 4-4"></path></svg>
+            </summary>
+            <p class="faq-answer">语音模型约 1.5 GB，不随安装包分发。首次启动从 HuggingFace 下载，失败会自动回退镜像，支持断点续传；本机已有模型可以直接复用。</p>
+          </details>
+          <details class="faq-item">
+            <summary>
+              被 Gatekeeper 拦了怎么办？
+              <svg class="faq-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 6 4 4 4-4"></path></svg>
+            </summary>
+            <p class="faq-answer">安装包是 ad-hoc 签名、未公证。用 brew 安装会自动移除隔离标记；手动下载 DMG 被拦截时，执行 <code>xattr -dr com.apple.quarantine /Applications/SubNow.app</code>。</p>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <section class="endcta" aria-labelledby="end-title">
+      <div class="container">
+        <h2 id="end-title">下次遇到没有中文字幕的片子，点一下就好。</h2>
+        <a class="btn btn-primary" href="https://github.com/etng/SubNow/releases/latest">安装 SubNow</a>
+        <p class="endcta-note">免费 · Apple Silicon · macOS 14+ · 视频不上传</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-grid">
+        <div class="footer-brand">
+          <a class="brand" href="#top" aria-label="SubNow 首页">
+            <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="3" y="8" width="18" height="5" rx="2.5" fill="currentColor"></rect>
+              <rect x="7" y="15.5" width="10" height="4" rx="2" fill="currentColor"></rect>
+            </svg>
+            <span>SubNow<span class="brand-dot">.</span></span>
+          </a>
+          <p>菜单栏字幕工具，为 mpv / IINA 补上缺失的中文字幕。转录、翻译与文件整理都在本机完成。</p>
+          <span class="footer-version">v0.1.4 · Apple Silicon · macOS 14+</span>
+        </div>
+        <div>
+          <h3>产品</h3>
+          <div class="footer-links">
+            <a href="#features">功能</a>
+            <a href="#workflow">工作流程</a>
+            <a href="#install">安装步骤</a>
+            <a href="#faq">常见问题</a>
+          </div>
+        </div>
+        <div>
+          <h3>资源</h3>
+          <div class="footer-links">
+            <a href="https://github.com/etng/SubNow">GitHub</a>
+            <a href="https://github.com/etng/SubNow/releases">Releases</a>
+            <a href="https://github.com/etng/homebrew-taps">Homebrew Tap</a>
+            <a href="https://github.com/etng/SubNow#readme">使用文档</a>
+          </div>
+        </div>
+        <div>
+          <h3>项目</h3>
+          <div class="footer-links">
+            <a href="https://github.com/etng/SubNow/issues">问题反馈</a>
+            <a href="https://github.com/etng/SubNow/releases">版本发布</a>
+            <a href="#privacy">隐私与文件</a>
+            <a href="#top">返回顶部</a>
+          </div>
+        </div>
+      </div>
+      <div class="legal">
+        <span>SubNow v0.1.4 · © 2026 etng</span>
+        <span>免费使用 · 本机转录 · 不收集观看记录 · macOS 与 Apple Silicon 是 Apple Inc. 的商标</span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
