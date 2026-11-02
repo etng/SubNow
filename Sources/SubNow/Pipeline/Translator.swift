@@ -3,7 +3,7 @@ import Foundation
 import FoundationModels
 #endif
 
-// MARK: - Provider 协议（与具体服务无关：与具体服务解耦）
+// MARK: - Provider 协议（与具体服务解耦）
 
 protocol TranslatorProvider {
     var label: String { get }
