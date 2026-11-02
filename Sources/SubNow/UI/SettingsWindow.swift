@@ -383,7 +383,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         stack.addArrangedSubview(note(
             "IINA 默认不允许外部程序联动。开启方法：IINA → ⌘, 设置 → 高级 → 勾选「启用高级设置」→ "
             + "「额外 mpv 选项」添加一项：名称 input-ipc-server，值 /tmp/subnow-mpv.sock → 完全退出 IINA 重开。\n"
-            + "未开启也能用（字幕生成在视频旁，重开自动加载；但不能自动挂载、判定精度略低）——当前状态： \(ipcStateDescription())。", width: 470))
+            + "未开启也能用（字幕生成在视频旁，重开自动加载；但不能自动挂载、判定精度略低）——当前状态：\(ipcStateDescription())。", width: 470))
 
         let verify = NSButton(title: "验证连接", target: self, action: #selector(verifyIPC))
         verify.bezelStyle = .rounded
@@ -480,80 +480,86 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         stack.addArrangedSubview(seg)
         stack.addArrangedSubview(note("切换后立即保存；正在生成的任务不受影响，新任务生效。", width: 470))
 
-        // Ollama 区
-        let urlField = NSTextField(string: cfg.ollamaURL)
-        urlField.frame = NSRect(x: 0, y: 0, width: 260, height: 22)
-        urlField.target = self
-        urlField.action = #selector(ollamaURLChanged(_:))
-        stack.addArrangedSubview(row("Ollama 地址", urlField))
+        switch cfg.translationKind {
+        case .ollama:
+            let urlField = NSTextField(string: cfg.ollamaURL)
+            urlField.frame = NSRect(x: 0, y: 0, width: 260, height: 22)
+            urlField.target = self
+            urlField.action = #selector(ollamaURLChanged(_:))
+            stack.addArrangedSubview(row("Ollama 地址", urlField))
 
-        let detect = NSButton(title: "检测服务并列出模型", target: self, action: #selector(detectOllama))
-        detect.bezelStyle = .rounded
-        detect.controlSize = .small
-        stack.addArrangedSubview(detect)
+            let detect = NSButton(title: "检测服务并列出模型", target: self, action: #selector(detectOllama))
+            detect.bezelStyle = .rounded
+            detect.controlSize = .small
+            stack.addArrangedSubview(detect)
 
-        let draftPopup = NSPopUpButton()
-        draftPopup.frame = NSRect(x: 0, y: 0, width: 240, height: 24)
-        fillModelPopup(draftPopup, selected: cfg.ollamaDraftModel)
-        draftPopup.target = self
-        draftPopup.action = #selector(draftModelPicked(_:))
-        let draftPull = NSButton(title: ollamaPulls[cfg.ollamaDraftModel] != nil ? "取消" : "拉取",
-                                 target: self, action: #selector(pullOllamaDraft(_:)))
-        draftPull.bezelStyle = .rounded
-        draftPull.controlSize = .small
-        let draftRow = NSStackView(views: [draftPopup, draftPull])
-        draftRow.orientation = .horizontal
-        draftRow.spacing = 8
-        stack.addArrangedSubview(row("草稿翻译模型", draftRow, hint: "用于粗稿阶段；qwen2.5:7b 起步即可。"))
+            let draftPopup = NSPopUpButton()
+            draftPopup.frame = NSRect(x: 0, y: 0, width: 240, height: 24)
+            fillModelPopup(draftPopup, selected: cfg.ollamaDraftModel)
+            draftPopup.target = self
+            draftPopup.action = #selector(draftModelPicked(_:))
+            let draftPull = NSButton(title: ollamaPulls[cfg.ollamaDraftModel] != nil ? "取消" : "拉取",
+                                     target: self, action: #selector(pullOllamaDraft(_:)))
+            draftPull.bezelStyle = .rounded
+            draftPull.controlSize = .small
+            let draftRow = NSStackView(views: [draftPopup, draftPull])
+            draftRow.orientation = .horizontal
+            draftRow.spacing = 8
+            stack.addArrangedSubview(row("草稿翻译模型", draftRow, hint: "用于粗稿阶段；qwen2.5:7b 起步即可。"))
 
-        let finalPopup = NSPopUpButton()
-        finalPopup.frame = NSRect(x: 0, y: 0, width: 240, height: 24)
-        fillModelPopup(finalPopup, selected: cfg.ollamaFinalModel)
-        finalPopup.target = self
-        finalPopup.action = #selector(finalModelPicked(_:))
-        let finalPull = NSButton(title: ollamaPulls[cfg.ollamaFinalModel] != nil ? "取消" : "拉取",
-                                 target: self, action: #selector(pullOllamaFinal(_:)))
-        finalPull.bezelStyle = .rounded
-        finalPull.controlSize = .small
-        let finalRow = NSStackView(views: [finalPopup, finalPull])
-        finalRow.orientation = .horizontal
-        finalRow.spacing = 8
-        stack.addArrangedSubview(row("精做翻译模型", finalRow, hint: "用于精做阶段；越大越慢越准。"))
+            let finalPopup = NSPopUpButton()
+            finalPopup.frame = NSRect(x: 0, y: 0, width: 240, height: 24)
+            fillModelPopup(finalPopup, selected: cfg.ollamaFinalModel)
+            finalPopup.target = self
+            finalPopup.action = #selector(finalModelPicked(_:))
+            let finalPull = NSButton(title: ollamaPulls[cfg.ollamaFinalModel] != nil ? "取消" : "拉取",
+                                     target: self, action: #selector(pullOllamaFinal(_:)))
+            finalPull.bezelStyle = .rounded
+            finalPull.controlSize = .small
+            let finalRow = NSStackView(views: [finalPopup, finalPull])
+            finalRow.orientation = .horizontal
+            finalRow.spacing = 8
+            stack.addArrangedSubview(row("精做翻译模型", finalRow, hint: "用于精做阶段；越大越慢越准。"))
 
-        let pullLabel = NSTextField(labelWithString: ollamaPullMessage)
-        pullLabel.font = .systemFont(ofSize: 11)
-        pullLabel.textColor = .secondaryLabelColor
-        pullLabel.lineBreakMode = .byTruncatingMiddle
-        pullLabel.isHidden = ollamaPullMessage.isEmpty
-        self.ollamaPullLabel = pullLabel
-        stack.addArrangedSubview(pullLabel)
+            let pullLabel = NSTextField(labelWithString: ollamaPullMessage)
+            pullLabel.font = .systemFont(ofSize: 11)
+            pullLabel.textColor = .secondaryLabelColor
+            pullLabel.lineBreakMode = .byTruncatingMiddle
+            pullLabel.isHidden = ollamaPullMessage.isEmpty
+            self.ollamaPullLabel = pullLabel
+            stack.addArrangedSubview(pullLabel)
 
-        // OpenAI 兼容区
-        let apiURL = NSTextField(string: cfg.openAIBaseURL)
-        apiURL.placeholderString = "https://api.example.com/v1"
-        apiURL.frame = NSRect(x: 0, y: 0, width: 250, height: 22)
-        apiURL.target = self
-        apiURL.action = #selector(openAIURLChanged(_:))
-        stack.addArrangedSubview(row("API Base URL", apiURL))
+        case .openAICompatible:
+            let apiURL = NSTextField(string: cfg.openAIBaseURL)
+            apiURL.placeholderString = "https://api.example.com/v1"
+            apiURL.frame = NSRect(x: 0, y: 0, width: 250, height: 22)
+            apiURL.target = self
+            apiURL.action = #selector(openAIURLChanged(_:))
+            stack.addArrangedSubview(row("API Base URL", apiURL))
 
-        let apiKey = NSSecureTextField(string: cfg.openAIAPIKey)
-        apiKey.placeholderString = "sk-…"
-        apiKey.frame = NSRect(x: 0, y: 0, width: 250, height: 22)
-        apiKey.target = self
-        apiKey.action = #selector(openAIKeyChanged(_:))
-        stack.addArrangedSubview(row("API Key", apiKey))
+            let apiKey = NSSecureTextField(string: cfg.openAIAPIKey)
+            apiKey.placeholderString = "sk-…"
+            apiKey.frame = NSRect(x: 0, y: 0, width: 250, height: 22)
+            apiKey.target = self
+            apiKey.action = #selector(openAIKeyChanged(_:))
+            stack.addArrangedSubview(row("API Key", apiKey))
 
-        let apiModel = NSTextField(string: cfg.openAIModel)
-        apiModel.placeholderString = "模型名"
-        apiModel.frame = NSRect(x: 0, y: 0, width: 250, height: 22)
-        apiModel.target = self
-        apiModel.action = #selector(openAIModelChanged(_:))
-        stack.addArrangedSubview(row("模型名", apiModel))
+            let apiModel = NSTextField(string: cfg.openAIModel)
+            apiModel.placeholderString = "模型名"
+            apiModel.frame = NSRect(x: 0, y: 0, width: 250, height: 22)
+            apiModel.target = self
+            apiModel.action = #selector(openAIModelChanged(_:))
+            stack.addArrangedSubview(row("模型名", apiModel))
 
-        if let fm = AppleFMAvailability.describe() {
-            stack.addArrangedSubview(statusLineText(fm))
-        } else {
-            stack.addArrangedSubview(note("Apple 系统模型：\(AppleFMAvailability.unavailableReason)。", width: 470))
+        case .appleFM:
+            if let fm = AppleFMAvailability.describe() {
+                stack.addArrangedSubview(statusLineText(fm))
+            } else {
+                stack.addArrangedSubview(note("Apple 系统模型：\(AppleFMAvailability.unavailableReason)。", width: 470))
+            }
+
+        case .none:
+            stack.addArrangedSubview(note("不翻译：只输出原文转录（SRT/ASS），跳过双语与精做翻译阶段。", width: 470))
         }
         return stack
     }
@@ -745,6 +751,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         Config.shared.translationKind = kinds[max(0, min(sender.selectedSegment, 3))]
         ComponentCenter.shared.refresh()
         ComponentCenter.shared.refreshOllamaAsync()
+        // 只显示当前引擎的配置项；切换后立即重绘，不能等异步观察者
+        rebuildCurrentPage()
     }
 
     @objc private func ollamaURLChanged(_ sender: NSTextField) {
