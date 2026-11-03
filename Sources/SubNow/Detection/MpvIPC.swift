@@ -187,20 +187,23 @@ enum MpvIPC {
         URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
     }
 
-    /// 判断"当前已启用"的字幕轨里有没有中文（type=sub、selected、lang/title 指向中文）。
-    /// 仅存在但未选中的中文轨不算——用户此刻屏幕上并没有中文字幕。
+    /// 判断文件里是否存在中文字幕轨（不要求当前选中）。
+    /// 已有中文轨就不该再生成；未选中时用户可在播放器里自行切换。
     static func hasChineseSubtitleTrack(tracks: [Track]) -> Bool {
-        let zhLangs: Set<String> = ["zh", "chi", "zho", "zh-cn", "zh-tw", "zh-hans", "zh-hant", "yue"]
-        return tracks.contains { track in
-            guard track.type == "sub", track.selected else { return false }
-            if let lang = track.lang?.lowercased(), zhLangs.contains(lang) { return true }
-            if let title = track.title {
-                if zhLangs.contains(title.lowercased()) { return true }
-                if title.contains("中文") || title.contains("中字") || title.contains("简体") || title.contains("繁体") {
-                    return true
-                }
-            }
+        tracks.contains { track in
+            guard track.type == "sub" else { return false }
+            if let lang = track.lang, VideoProbe.isChineseLanguage(lang) { return true }
+            if let title = track.title, titleLooksChinese(title) { return true }
             return false
         }
+    }
+
+    /// 标题常见写法：Chs&Eng、简体、繁中、中文。按词匹配 chs/cht，避免 "Bachs" 之类误判。
+    private static func titleLooksChinese(_ title: String) -> Bool {
+        if ["中文", "中字", "简体", "繁体", "简中", "繁中"].contains(where: title.contains) {
+            return true
+        }
+        let tokens = title.lowercased().split { !$0.isLetter && !$0.isNumber }
+        return tokens.contains { ["chs", "cht", "zh", "chi", "zho", "cmn", "yue"].contains(String($0)) }
     }
 }

@@ -1,7 +1,7 @@
 import Foundation
 
 /// 字幕文件写入：SRT（原文/纯中文）与双语 ASS（正排/反排）。
-/// ASS 样式：PlayRes 1920×1080、中文白 56 粗体在上、原文金 #D0A850 38 粗体在下。
+/// ASS 样式沿用成熟压制字幕的画布：PlayRes 384×288、中文 20、原文 14、描边/阴影 1。
 enum Writers {
     // MARK: - 时间戳
 
@@ -49,14 +49,16 @@ enum Writers {
         """
         [Script Info]
         ScriptType: v4.00+
-        PlayResX: 1920
-        PlayResY: 1080
-        ScaledBorderAndShadow: yes
+        Collisions: Reverse
+        PlayResX: 384
+        PlayResY: 288
+        WrapStyle: 0
+        ScaledBorderAndShadow: no
 
         [V4+ Styles]
         Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-        Style: Zh,PingFang SC,56,&H00FFFFFF,&H000000FF,&H00000000,&H96000000,1,0,0,0,100,100,0,0,1,1.6,0.8,2,60,60,40,1
-        Style: Org,PingFang SC,38,&H0050A8D0,&H000000FF,&H00000000,&H96000000,1,0,0,0,100,100,0,0,1,1.3,0.6,2,60,60,40,1
+        Style: Zh,PingFang SC,20,&H00FFFFFF,&H000000FF,&H00000000,&H96000000,1,0,0,0,100,100,0,0,1,1,1,2,0,0,8,1
+        Style: Org,PingFang SC,14,&H0050A8D0,&H000000FF,&H00000000,&H96000000,1,0,0,0,100,100,0,0,1,1,1,2,0,0,8,1
 
         [Events]
         Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -73,9 +75,10 @@ enum Writers {
     /// 双语 ASS。zhFirst=true：中文第 1 行（白）；false：原文在上（zh-bottom 变体）。
     static func writeBilingualAss(_ segments: [Segment], language: String, to url: URL, zhFirst: Bool) throws {
         var out = assHeader() + "\n"
-        let orgWidth = Segments.isCJK(language) ? 40 : 90
+        // 384 宽画布下：中文 20px 约 19 字/行；原文 14px 约 52 字符/行
+        let orgWidth = Segments.isCJK(language) ? 18 : 50
         for seg in segments {
-            let zh = Segments.wrapLine(escapeAss(seg.zh ?? ""), width: 40, joiner: "\\N")
+            let zh = Segments.wrapLine(escapeAss(seg.zh ?? ""), width: 18, joiner: "\\N")
             let org = Segments.wrapLine(escapeAss(seg.src), width: orgWidth, joiner: "\\N")
             let text: String
             if zhFirst {

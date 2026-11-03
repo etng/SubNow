@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var latestSnapshot: PlayerMonitor.Snapshot?
     private var pendingRestore: [String] = []
     private var isTerminating = false
+    private var ollamaIdleGeneration = 0
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusBar = StatusBarController()
@@ -65,10 +66,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         JobManager.shared.onJobsChanged = { [weak self] in
             self?.updateStatusBarState()
+            self?.refreshOllamaIdleRelease()
         }
         monitor.start()
         updateStatusBarState()
         loadPendingRestore()
+        refreshOllamaIdleRelease()
+    }
+
+    /// 任务全部停下后稍等再回收 Ollama 模型；一旦有新任务就让旧回收失效。
+    /// 只在 SubNow 自己的空闲进程里判断，不停止用户管理的 ollama serve。
+    private func refreshOllamaIdleRelease() {
+        ollamaIdleGeneration += 1
+        let generation = ollamaIdleGeneration
+        guard JobManager.shared.runningJob == nil else { return }
+        guard Config.shared.translationKind == .ollama else { return }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(60))
+            guard let self, generation == self.ollamaIdleGeneration else { return }
+            guard JobManager.shared.runningJob == nil else { return }
+            await OllamaManager.shared.releaseIdleModels(baseURL: Config.shared.ollamaURL)
+        }
     }
 
     // MARK: - 状态栏刷新
@@ -136,7 +154,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let active = snapshot?.playbacks.first else { return nil }
         let name = URL(fileURLWithPath: active.videoPath).lastPathComponent
         let subState: String
-        if let zh = active.loadedChineseSubtitle {
+        if let zh = active.hasChineseSubtitle {
             subState = zh ? "已有中文字幕轨" : "未加载中文字幕"
         } else {
             subState = "字幕状态检测中"
@@ -255,6 +273,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         monitor.stop()
         Task { @MainActor in
             await JobManager.shared.shutdown(timeout: 5)
+            // 正常空闲时已回收；退出前再兜一次，避免模型拖到 keep_alive 到期
+            if Config.shared.translationKind == .ollama {
+                await OllamaManager.shared.releaseIdleModels(baseURL: Config.shared.ollamaURL)
+            }
             await ProcessRegistry.shared.terminateAll(grace: 2)
             Log.info("清理完成")
             Log.flush()

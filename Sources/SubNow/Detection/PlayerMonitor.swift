@@ -11,7 +11,7 @@ final class PlayerMonitor {
         let videoPath: String
         let viaIPC: Bool            // true=socket 精确判定；false=lsof 兜底（文件级判定）
         let socketPath: String?
-        let loadedChineseSubtitle: Bool?  // 仅 IPC 可判定
+        let hasChineseSubtitle: Bool?  // 仅 IPC 可判定（文件内是否存在中文轨）
         /// 是否真的在播放（不是暂停/仅打开）。IPC 读 pause；无 IPC 时用是否前台兜底。
         let isPlaying: Bool
     }
@@ -130,7 +130,7 @@ final class PlayerMonitor {
                         ?? (NSWorkspace.shared.frontmostApplication?.processIdentifier == pid)
                     playbacks.append(Playback(player: name, pid: pid, videoPath: path,
                                               viaIPC: true, socketPath: sock,
-                                              loadedChineseSubtitle: hasZH,
+                                              hasChineseSubtitle: hasZH,
                                               isPlaying: playing))
                     seenPaths.insert(path)
                     break
@@ -147,7 +147,7 @@ final class PlayerMonitor {
             guard fileSizeOK(video.path, minMB: config.minFileMB) else { continue }
             playbacks.append(Playback(player: name, pid: pid, videoPath: video.path,
                                       viaIPC: false, socketPath: nil,
-                                      loadedChineseSubtitle: nil,
+                                      hasChineseSubtitle: nil,
                                       isPlaying: NSWorkspace.shared.frontmostApplication?.processIdentifier == pid))
             seenPaths.insert(video.path)
         }

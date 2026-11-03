@@ -10,7 +10,14 @@ enum VideoProbe {
     static let subtitleExtensions: Set<String> = [
         ".srt", ".ass", ".ssa", ".sub", ".sup", ".vtt", ".smi",
     ]
-    static let zhLanguages: Set<String> = ["zh", "chi", "zho"]
+    /// mpv 可能给 ISO 639-2（chi）或 BCP-47（zh-Hans-CN、cmn-Hant），只看主语言子标签。
+    static let chinesePrimaryLanguages: Set<String> = ["zh", "chi", "zho", "cmn", "yue"]
+
+    static func isChineseLanguage(_ tag: String) -> Bool {
+        let normalized = tag.lowercased().replacingOccurrences(of: "_", with: "-")
+        guard let primary = normalized.split(separator: "-").first else { return false }
+        return chinesePrimaryLanguages.contains(String(primary))
+    }
 
     struct VideoFacts {
         let embeddedChinese: Bool   // 内嵌中文字幕轨
@@ -86,7 +93,7 @@ enum VideoProbe {
                   let streams = obj["streams"] as? [[String: Any]] else { return [] }
             return streams.compactMap { s in
                 guard (s["codec_type"] as? String) == "subtitle" else { return nil }
-                return (s["language"] as? String)?.split(separator: "-").first.map(String.init)?.lowercased()
+                return (s["language"] as? String)?.lowercased()
             }
         } catch {
             return []
@@ -147,7 +154,7 @@ enum VideoProbe {
             }.value
             await ProbeCache.shared.store(langs, for: key)
         }
-        let embeddedZH = langs.contains { zhLanguages.contains($0) }
+        let embeddedZH = langs.contains { isChineseLanguage($0) }
         return VideoFacts(embeddedChinese: embeddedZH, hasSidecar: sidecar.exists,
                           sidecarIsChinese: sidecar.isChinese)
     }

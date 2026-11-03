@@ -21,13 +21,21 @@ enum WorkspaceMigrator {
         }
 
         var migrated = 0
-        for dir in dirs where FileManager.default.fileExists(atPath: dir.path) {
+        for dir in dirs {
+            // 启动时不枚举网络卷：SMB 目录可能长时间卡住主线程。
+            // 只有用户真正打开该卷上的文件时，才在播放路径上读取它。
+            guard isLocalDirectory(dir),
+                  FileManager.default.fileExists(atPath: dir.path) else { continue }
             migrated += migrate(directory: dir)
         }
         if migrated > 0 {
             Log.info("旧材料迁移完成：\(migrated) 部影片")
         }
         return migrated
+    }
+
+    private static func isLocalDirectory(_ url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.volumeIsLocalKey]))?.volumeIsLocal ?? false
     }
 
     private static func playbackPaths() -> [String] {

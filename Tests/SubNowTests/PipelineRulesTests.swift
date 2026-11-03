@@ -7,8 +7,12 @@ final class PipelineRulesTests: XCTestCase {
 
     func testAssOriginalColorByteOrder() {
         // 目标 #D0A850；ASS 为 &HAABBGGRR，因此必须写成 &H0050A8D0
-        XCTAssertTrue(Writers.assHeader().contains("Style: Org,PingFang SC,38,&H0050A8D0"))
+        XCTAssertTrue(Writers.assHeader().contains("Style: Org,PingFang SC,14,&H0050A8D0"))
         XCTAssertFalse(Writers.assHeader().contains("&H00850AD0"))
+        // 沿用成熟压制字幕的画布与字号，避免电视上偏小
+        XCTAssertTrue(Writers.assHeader().contains("PlayResX: 384"))
+        XCTAssertTrue(Writers.assHeader().contains("PlayResY: 288"))
+        XCTAssertTrue(Writers.assHeader().contains("Style: Zh,PingFang SC,20,&H00FFFFFF"))
     }
 
     func testAssEscaping() {
@@ -162,10 +166,10 @@ final class PipelineRulesTests: XCTestCase {
         XCTAssertTrue(result.isChinese)
     }
 
-    func testChineseTrackRequiresSelectedSubtitle() {
+    func testChineseTrackDetectedRegardlessOfSelection() {
         let unselected = MpvIPC.Track(id: 1, type: "sub", lang: "zh", title: nil,
                                       selected: false, external: false)
-        XCTAssertFalse(MpvIPC.hasChineseSubtitleTrack(tracks: [unselected]))
+        XCTAssertTrue(MpvIPC.hasChineseSubtitleTrack(tracks: [unselected]))
 
         let selected = MpvIPC.Track(id: 2, type: "sub", lang: "zh-cn", title: nil,
                                     selected: true, external: false)
@@ -174,6 +178,44 @@ final class PipelineRulesTests: XCTestCase {
         let audio = MpvIPC.Track(id: 3, type: "audio", lang: "zh", title: nil,
                                  selected: true, external: false)
         XCTAssertFalse(MpvIPC.hasChineseSubtitleTrack(tracks: [audio]))
+
+        // PGS 轨常见：无语言标签、无默认选中标志，只能靠标题判断
+        let pgs = MpvIPC.Track(id: 4, type: "sub", lang: nil,
+                               title: "「单语」简体中文", selected: false, external: false)
+        XCTAssertTrue(MpvIPC.hasChineseSubtitleTrack(tracks: [pgs]))
+
+        let japanese = MpvIPC.Track(id: 5, type: "sub", lang: nil,
+                                    title: "「単一言語」日本語", selected: false, external: false)
+        XCTAssertFalse(MpvIPC.hasChineseSubtitleTrack(tracks: [japanese]))
+    }
+
+    func testChineseTrackAcceptsBCP47Tags() {
+        // IINA/mpv 实际返回的是完整 BCP-47 标签，如 zh-Hans-CN / cmn-Hant
+        let bcp47 = MpvIPC.Track(id: 1, type: "sub", lang: "zh-Hans-CN",
+                                 title: "Chs&Eng(ASS)制作@糖葫芦", selected: true, external: false)
+        XCTAssertTrue(MpvIPC.hasChineseSubtitleTrack(tracks: [bcp47]))
+
+        let mandarin = MpvIPC.Track(id: 2, type: "sub", lang: "cmn-Hant",
+                                    title: "Traditional(SRT)", selected: true, external: false)
+        XCTAssertTrue(MpvIPC.hasChineseSubtitleTrack(tracks: [mandarin]))
+
+        let titleOnly = MpvIPC.Track(id: 3, type: "sub", lang: nil,
+                                     title: "Chs&Eng", selected: true, external: false)
+        XCTAssertTrue(MpvIPC.hasChineseSubtitleTrack(tracks: [titleOnly]))
+
+        let english = MpvIPC.Track(id: 4, type: "sub", lang: "en-US",
+                                   title: "United States(SRT)", selected: true, external: false)
+        XCTAssertFalse(MpvIPC.hasChineseSubtitleTrack(tracks: [english]))
+    }
+
+    func testChineseLanguageTagMatching() {
+        XCTAssertTrue(VideoProbe.isChineseLanguage("chi"))
+        XCTAssertTrue(VideoProbe.isChineseLanguage("zh-Hans-CN"))
+        XCTAssertTrue(VideoProbe.isChineseLanguage("zh_CN"))
+        XCTAssertTrue(VideoProbe.isChineseLanguage("cmn-Hant"))
+        XCTAssertTrue(VideoProbe.isChineseLanguage("yue"))
+        XCTAssertFalse(VideoProbe.isChineseLanguage("en-US"))
+        XCTAssertFalse(VideoProbe.isChineseLanguage("ja"))
     }
 
     func testPlayerBookSidecarInvalidation() async throws {

@@ -51,14 +51,13 @@ final class Advisor {
 
         // ① 字幕缺失判定
         var needs = false
-        if playback.viaIPC, let loaded = playback.loadedChineseSubtitle {
-            // socket 精确判定：看"已选中"的字幕轨（用户要求：没有"加载到"合适的中文字幕才提示）
-            if loaded {
+        if playback.viaIPC, let hasZH = playback.hasChineseSubtitle {
+            // socket 精确判定：文件里存在中文轨即可，不要求当前选中
+            // （PGS 等轨常见无语言标签、也无默认选中标志）
+            if hasZH {
                 await book.set("has-subs", for: url, sidecar: true)
                 return
             }
-            // track-list 可读但没有已选中的中文轨 → 视为缺失
-            // （文件里可能有未启用的字轨，但用户此刻确实没字幕可看）
             needs = true
         } else {
             // 无 IPC，或 IPC 连上了但 track-list 读取失败 → 降级到文件级判定

@@ -116,7 +116,8 @@ struct OllamaProvider: TranslatorProvider {
                                                          sourceLanguageName: sourceLanguageName)],
             ],
             "stream": false,
-            "keep_alive": "12h",
+            // 只保活到任务间隙；任务停下后的回收由 OllamaManager 统一处理
+            "keep_alive": "5m",
             "think": false,
             "options": ["temperature": 0.2, "num_ctx": 8192],
             "format": Prompts.ollamaSchema,
@@ -135,6 +136,8 @@ struct OllamaProvider: TranslatorProvider {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
+        // 即使请求失败，模型也可能已被加载，先记账再发请求
+        await OllamaManager.shared.noteUsed(model: model, baseURL: baseURL)
         let (data, _) = try await URLSession.shared.data(for: request)
         guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw OllamaError(message: "Ollama 响应解析失败")
